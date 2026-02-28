@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Rainfall – Amballoor Panchayat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Kodchasan:wght@400;500;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Kodchasan', sans-serif;
+      background: #e5e7eb;
+      display: flex;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    #root {
+      width: 360px;
+      min-height: 100vh;
+      background: #ffffff;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    /* ─── Constants ────────────────────────────────────────────────────────── */
+    const SHEET_ID  = '1nScYz8mnTWbNRNcZ7Z9vKD_nCom2_VRN';
+    const GID       = '576872966';
+    const GVIZ_BASE = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq`;
+    const PAGE_SIZE = 4;
+
+    // 4 card colour variants – design order: orange → green → purple → gold
+    const VARIANTS = [
+      { bg: '#fff6ed', accent: '#e48112', barBg: '#ffd6a8', barBorder: '#c48c4c' },
+      { bg: '#f0f6f2', accent: '#1d9b68', barBg: '#ccebde', barBorder: '#1d9b68' },
+      { bg: '#eef0fa', accent: '#5b60d5', barBg: '#c5cbec', barBorder: '#5b60d5' },
+      { bg: '#fbf6eb', accent: '#9e852c', barBg: '#e3d6a7', barBorder: '#9e852c' },
+    ];
+
+    const TABS = ['day', 'week', 'month'];
+
+    /* ─── JSONP helper (bypasses CORS for file:// and any origin) ──────────── */
+    function jsonpFetch(query) {
+      return new Promise((resolve, reject) => {
+        const cbName = `gvizCb_${Date.now()}_${Math.floor(Math.random() * 99999)}`;
+
+        const tqx = encodeURIComponent(`out:json;responseHandler:${cbName}`);
+        const tq  = encodeURIComponent(query);
+        const url = `${GVIZ_BASE}?gid=${GID}&tqx=${tqx}&tq=${tq}`;
+
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error('Request timed out'));
+        }, 20000);
+
+        function cleanup() {
+          clearTimeout(timer);
+          delete window[cbName];
+          if (script.parentNode) document.head.removeChild(script);
+        }
+
+        window[cbName] = (data) => {
+          cleanup();
+          resolve(data);
+        };
+
+        const script = document.createElement('script');
+        script.src = url;
+        script.onerror = () => { cleanup(); reject(new Error('Script load failed')); };
+        document.head.appendChild(script);
+      });
+    }
+
+    /* ─── Date utilities ───────────────────────────────────────────────────── */
+
+    // Sheet stores dates as MMM-DD (e.g. "Feb-22" = February 22nd).
+    // gviz misreads the DD as a 2-digit year, so "Feb-22" becomes Date(2022,1,1).
+    // The actual day is always:  gvizYear % 100  (works for 1930→30, 2022→22, etc.)
+    // The real calendar year is inferred: current year, unless that date is in the
+    // future — in which case use the previous year.
+    function parseGvizDate(v) {
+      if (!v) return null;
+      if (typeof v === 'string') {
+        const m = v.match(/^Date\((\d+),(\d+),(\d+)\)$/);
+        if (m) {
+          const gvizYear = +m[1];
+          const month    = +m[2];          // 0-indexed (Jan=0 … Dec=11)
+          const day      = gvizYear % 100; // "22" stored as 2022 → day 22
+
+          const today       = new Date();
+          const currentYear = today.getFullYear();
+          const candidate   = new Date(currentYear, month, day);
+          const year        = candidate > today ? currentYear - 1 : currentYear;
+
+          return new Date(year, month, day);
+        }
+        return new Date(v);
+      }
+      return new Date(v);
+    }
+
+    // "Wednesday, 22 Feb" — day name always derived from the real JS Date object
+    function formatDate(d) {
+      if (!d || isNaN(d)) return '';
+      const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+      const MONS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return `${DAYS[d.getDay()]}, ${d.getDate()} ${MONS[d.getMonth()]}`;
+    }
+
+    /* ─── Data fetching ────────────────────────────────────────────────────── */
+
+    // WHERE clause reused in both count + data queries
+    const DATA_WHERE = 'A IS NOT NULL AND (B+C+D+E+F+G+H+I+J+K+L+M) > 0';
+
+    // One-time count of valid data rows (cached after first call)
+    let _totalValid = null;
+    async function getTotalValid() {
+      if (_totalValid !== null) return _totalValid;
+      const data = await jsonpFetch(`SELECT COUNT(A) WHERE ${DATA_WHERE}`);
+      _totalValid = Math.round(data.table.rows[0].c[0].v);
+      return _totalValid;
+    }
+
+    function parseRows(data) {
+      if (!data?.table?.rows?.length) return [];
+      const cols = data.table.cols;
+      return data.table.rows.map((row) => {
+        const cells = row.c || [];
+        const date  = parseGvizDate(cells[0]?.v);
+        const locations = {};
+        for (let i = 1; i < cols.length; i++) {
+          const label = cols[i].label;
+          if (!label) continue;           // skip unlabelled extra columns (e.g. col N)
+          const val = cells[i]?.v;
+          locations[label] = val != null ? Number(val) : 0;
+        }
+        return { date, locations };
+      });
+    }
+
+    // loadedCount: how many valid rows have already been shown (starts at 0)
+    async function fetchPage(loadedCount) {
+      const total = await getTotalValid();
+      // How many rows are still above what's already loaded?
+      const remaining = total - loadedCount;
+      if (remaining <= 0) return [];
+
+      // Take the next PAGE_SIZE rows counting from the end of the filtered set
+      const limit  = Math.min(PAGE_SIZE, remaining);
+      const offset = remaining - limit;          // rows before this page in sheet order
+
+      const query = [
+        'SELECT *',
+        `WHERE ${DATA_WHERE}`,
+        `LIMIT ${limit} OFFSET ${offset}`,
+      ].join(' ');
+
+      const data = await jsonpFetch(query);
+      const rows = parseRows(data);
+
+      // Sheet order is oldest-first; reverse so card 0 = most recent row in sheet
+      return rows.reverse();
+    }
+
+    /* ─── Bar row ──────────────────────────────────────────────────────────── */
+    // staggerMs  – delay before this bar starts animating (creates waterfall effect)
+    // animateNumbers – count numeral from 0 → value in sync with the bar
+    function BarRow({ name, value, maxValue, accent, barBg, barBorder, staggerMs = 0, animateNumbers = false }) {
+      const target = maxValue > 0 ? Math.min((value / maxValue) * 100, 100) : 0;
+
+      // Bar width: starts at 0, jumps to target after stagger → CSS handles ease-out
+      const [barWidth, setBarWidth] = useState(0);
+      // Displayed numeral: 0 on first-load cards, final value immediately on later loads
+      const [disp, setDisp] = useState(animateNumbers ? 0 : value);
+
+      useEffect(() => {
+        // Let the browser paint the 0-width bar first, then trigger the transition
+        const t = setTimeout(() => setBarWidth(target), staggerMs + 30);
+        return () => clearTimeout(t);
+      }, []);
+
+      useEffect(() => {
+        if (!animateNumbers) { setDisp(value); return; }
+        if (value <= 0)      { setDisp(value); return; }
+
+        const DURATION = 750; // ms – must feel in sync with the CSS 0.75s
+        let raf;
+        const tid = setTimeout(() => {
+          const t0 = performance.now();
+          function tick(now) {
+            const p     = Math.min((now - t0) / DURATION, 1);
+            const eased = 1 - Math.pow(1 - p, 3);          // ease-out cubic
+            setDisp(p < 1 ? Math.round(value * eased) : value);
+            if (p < 1) raf = requestAnimationFrame(tick);
+          }
+          raf = requestAnimationFrame(tick);
+        }, staggerMs + 30);
+
+        return () => { clearTimeout(tid); cancelAnimationFrame(raf); };
+      }, []);
+
+      return (
+        <div style={{ position: 'relative', height: 41, width: '100%' }}>
+          {/* Coloured bar — CSS transition drives the ease-out grow animation */}
+          <div style={{
+            position: 'absolute', left: 0, top: 0,
+            height: '100%',
+            width: `${barWidth}%`,
+            backgroundColor: barBg,
+            borderBottom: `0.5px solid ${barBorder}`,
+            transition: 'width 0.75s cubic-bezier(0.4, 0, 0.2, 1)',
+          }} />
+          {/* Location label */}
+          <div style={{
+            position: 'absolute', left: 0, top: 0,
+            height: '100%', paddingLeft: 11,
+            display: 'flex', alignItems: 'center',
+            zIndex: 1, pointerEvents: 'none',
+          }}>
+            <span style={{
+              fontFamily: "'Kodchasan', sans-serif",
+              fontSize: 13, fontWeight: 500,
+              color: accent, whiteSpace: 'nowrap',
+            }}>
+              {name}
+            </span>
+          </div>
+          {/* Rainfall numeral */}
+          <div style={{
+            position: 'absolute', right: 8, top: 0,
+            height: '100%', display: 'flex', alignItems: 'center',
+            zIndex: 1,
+          }}>
+            <span style={{
+              fontFamily: "'Kodchasan', sans-serif",
+              fontSize: 11, fontWeight: 500, color: '#888',
+            }}>
+              {disp > 0 ? disp : '–'}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── Gap summary (dry spell between two cards) ───────────────────────── */
+    function GapSummary({ olderDate, newerDate }) {
+      const DAY_MS  = 24 * 60 * 60 * 1000;
+      const rawDiff = Math.round((newerDate - olderDate) / DAY_MS);
+      // rawDiff 1 = consecutive days (no gap), 2 = exactly 1 skipped day, etc.
+      if (rawDiff <= 1) return null;
+
+      const MONS   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const fmt    = (d) => `${MONS[d.getMonth()]} ${d.getDate()}`;
+      const from   = new Date(olderDate.getTime() + DAY_MS);  // day after older card
+      const to     = new Date(newerDate.getTime()  - DAY_MS); // day before newer card
+
+      const text = rawDiff === 2
+        ? `☀️ No rain on ${fmt(from)}`
+        : `☀️ No rain from ${fmt(from)} to ${fmt(to)}`;
+
+      return (
+        <div style={{
+          textAlign: 'center',
+          color: '#c48c4c',           // warm amber from the design's own palette
+          fontSize: 13,
+          fontFamily: "'Kodchasan', sans-serif",
+          fontWeight: 500,
+          padding: '2px 0',
+          opacity: 0.85,
+        }}>
+          {text}
+        </div>
+      );
+    }
+
+    /* ─── Date card ────────────────────────────────────────────────────────── */
+    function DateCard({ data, colorIdx, animateNumbers }) {
+      const v = VARIANTS[colorIdx % 4];
+      // Sort locations A → Z
+      const sorted = Object.entries(data.locations).sort(([a], [b]) => a.localeCompare(b));
+      const maxVal = Math.max(...sorted.map(([, n]) => n), 1);
+
+      return (
+        <div style={{
+          backgroundColor: v.bg,
+          borderRadius: 9.32, padding: 16,
+          display: 'flex', flexDirection: 'column', gap: 16,
+          border: '1.34px solid rgba(0,0,0,0.07)',
+        }}>
+          <div style={{
+            fontFamily: "'Kodchasan', sans-serif",
+            fontSize: 16, fontWeight: 700,
+            color: v.accent,
+            letterSpacing: '0.066px',
+          }}>
+            {formatDate(data.date)}
+          </div>
+          <div>
+            {sorted.map(([name, value], i) => (
+              <BarRow
+                key={name} name={name} value={value} maxValue={maxVal}
+                accent={v.accent} barBg={v.barBg} barBorder={v.barBorder}
+                staggerMs={i * 50} animateNumbers={animateNumbers}
+              />
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── App ──────────────────────────────────────────────────────────────── */
+    function App() {
+      const [cards, setCards]         = useState([]);
+      // loadedCount: number of valid sheet rows already shown (starts at 0)
+      const [loadedCount, setLoaded]  = useState(0);
+      const [loading, setLoading]     = useState(false);
+      const [hasMore, setHasMore]     = useState(true);
+      const [error, setError]         = useState('');
+      const [activeTab, setActiveTab] = useState('day');
+
+      const load = useCallback(async (currentLoaded) => {
+        setLoading(true);
+        setError('');
+        const isInitial = currentLoaded === 0;
+        try {
+          const rows = await fetchPage(currentLoaded);
+          if (rows.length === 0 || rows.length < PAGE_SIZE) setHasMore(false);
+          setCards((prev) => [...prev, ...rows.map(r => ({ ...r, isInitial }))]);
+          setLoaded(currentLoaded + rows.length);
+        } catch (e) {
+          setError(`Failed to load: ${e.message}`);
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      useEffect(() => { load(0); }, []);
+
+      return (
+        <div style={{
+          padding: '12px 16px 32px',
+          display: 'flex', flexDirection: 'column', gap: 22,
+          fontFamily: "'Kodchasan', sans-serif",
+          minHeight: '100vh', backgroundColor: '#fff',
+        }}>
+
+          {/* ── Header card ─────────────────────────────────────────────── */}
+          <div style={{
+            borderRadius: 9.32, padding: 16,
+            display: 'flex', flexDirection: 'column', gap: 13,
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{
+                fontFamily: "'Kodchasan', sans-serif",
+                fontSize: 24, fontWeight: 700,
+                color: '#155dfc', letterSpacing: 0.37,
+              }}>
+                Amballoor
+              </div>
+              <div style={{
+                fontFamily: "'Kodchasan', sans-serif",
+                fontSize: 12, fontWeight: 400,
+                color: '#155dfc', letterSpacing: -0.41,
+              }}>
+                Panchayat
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {TABS.map((tab) => (
+                <button key={tab} onClick={() => setActiveTab(tab)}
+                  style={{ display:'flex', alignItems:'center', gap:4, background:'none', border:'none', cursor:'pointer', padding:0 }}>
+                  {activeTab === tab && (
+                    <div style={{ width:8, height:8, borderRadius:'50%', backgroundColor:'#155dfc', flexShrink:0 }} />
+                  )}
+                  <span style={{
+                    fontFamily: "'Kodchasan', sans-serif",
+                    fontSize: 16, fontWeight: 500,
+                    color: activeTab === tab ? '#155dfc' : '#99a1af',
+                    letterSpacing: -0.41, lineHeight: 1.63,
+                  }}>
+                    {tab}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Date cards with gap summaries ───────────────────────────── */}
+          {cards.map((card, i) => (
+            <React.Fragment key={card.date ? card.date.toISOString() : i}>
+              <DateCard data={card} colorIdx={i} animateNumbers={card.isInitial} />
+              {/* After each card, check if there's a dry-spell gap before the next */}
+              {i < cards.length - 1 && card.date && cards[i + 1].date && (
+                <GapSummary olderDate={cards[i + 1].date} newerDate={card.date} />
+              )}
+            </React.Fragment>
+          ))}
+
+          {/* ── Loading ──────────────────────────────────────────────────── */}
+          {loading && (
+            <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Kodchasan',sans-serif", fontSize:14, padding:'8px 0' }}>
+              Loading…
+            </div>
+          )}
+
+          {/* ── Error ────────────────────────────────────────────────────── */}
+          {error && (
+            <div style={{ textAlign:'center', color:'#e44', fontFamily:"'Kodchasan',sans-serif", fontSize:13, padding:'8px 0' }}>
+              {error}
+            </div>
+          )}
+
+          {/* ── Show Previous Dates ──────────────────────────────────────── */}
+          {!loading && hasMore && (
+            <button onClick={() => load(loadedCount)} style={{
+              fontFamily: "'Kodchasan', sans-serif",
+              fontSize: 16, fontWeight: 500,
+              color: '#155dfc', background: 'transparent',
+              border: '1.34px solid #155dfc',
+              borderRadius: 9.32, padding: '12px 0',
+              cursor: 'pointer', width: '100%', letterSpacing: -0.41,
+            }}>
+              Show Previous Dates
+            </button>
+          )}
+
+          {/* ── All loaded ───────────────────────────────────────────────── */}
+          {!loading && !hasMore && cards.length > 0 && (
+            <div style={{ textAlign:'center', color:'#99a1af', fontFamily:"'Kodchasan',sans-serif", fontSize:13 }}>
+              All dates loaded
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
