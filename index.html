@@ -118,6 +118,26 @@
       return `${DAYS[d.getDay()]}, ${d.getDate()} ${MONS[d.getMonth()]}`;
     }
 
+    // Returns the Monday (start of ISO week) for a given date
+    function getWeekMonday(date) {
+      const d = new Date(date);
+      const day = d.getDay(); // 0=Sun, 1=Mon … 6=Sat
+      const diff = day === 0 ? -6 : 1 - day; // shift back to Monday
+      d.setDate(d.getDate() + diff);
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+
+    // "3 Feb – 9 Feb" or "28 Jan – 3 Feb" for cross-month weeks
+    function formatWeekRange(monday) {
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const MONS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const from = `${monday.getDate()} ${MONS[monday.getMonth()]}`;
+      const to   = `${sunday.getDate()} ${MONS[sunday.getMonth()]}`;
+      return `${from} – ${to}`;
+    }
+
     /* ─── Data fetching ────────────────────────────────────────────────────── */
 
     // WHERE clause reused in both count + data queries
@@ -147,6 +167,30 @@
         }
         return { date, locations };
       });
+    }
+
+    // Fetch every valid row (used for week/month aggregation)
+    async function fetchAllRows() {
+      const total = await getTotalValid();
+      if (total === 0) return [];
+      const query = `SELECT * WHERE ${DATA_WHERE} LIMIT ${total} OFFSET 0`;
+      const data  = await jsonpFetch(query);
+      return parseRows(data);
+    }
+
+    // Group an array of day rows into weeks (Mon–Sun), newest week first
+    function groupByWeek(rows) {
+      const weeks = {};
+      for (const row of rows) {
+        if (!row.date) continue;
+        const monday = getWeekMonday(row.date);
+        const key    = monday.toISOString().slice(0, 10);
+        if (!weeks[key]) weeks[key] = { monday, locations: {} };
+        for (const [loc, val] of Object.entries(row.locations)) {
+          weeks[key].locations[loc] = (weeks[key].locations[loc] || 0) + val;
+        }
+      }
+      return Object.values(weeks).sort((a, b) => b.monday - a.monday);
     }
 
     // loadedCount: how many valid rows have already been shown (starts at 0)
@@ -319,6 +363,40 @@
       );
     }
 
+    /* ─── Week card ────────────────────────────────────────────────────────── */
+    function WeekCard({ data, colorIdx, animateNumbers }) {
+      const v      = VARIANTS[colorIdx % 4];
+      const sorted = Object.entries(data.locations).sort(([a], [b]) => a.localeCompare(b));
+      const maxVal = Math.max(...sorted.map(([, n]) => n), 1);
+
+      return (
+        <div style={{
+          backgroundColor: v.bg,
+          borderRadius: 9.32, padding: 16,
+          display: 'flex', flexDirection: 'column', gap: 16,
+          border: '1.34px solid rgba(0,0,0,0.07)',
+        }}>
+          <div style={{
+            fontFamily: "'Kodchasan', sans-serif",
+            fontSize: 16, fontWeight: 700,
+            color: v.accent,
+            letterSpacing: '0.066px',
+          }}>
+            {formatWeekRange(data.monday)}
+          </div>
+          <div>
+            {sorted.map(([name, value], i) => (
+              <BarRow
+                key={name} name={name} value={Math.round(value)} maxValue={Math.round(maxVal)}
+                accent={v.accent} barBg={v.barBg} barBorder={v.barBorder}
+                staggerMs={i * 50} animateNumbers={animateNumbers}
+              />
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     /* ─── App ──────────────────────────────────────────────────────────────── */
     function App() {
       const [cards, setCards]         = useState([]);
@@ -328,6 +406,12 @@
       const [hasMore, setHasMore]     = useState(true);
       const [error, setError]         = useState('');
       const [activeTab, setActiveTab] = useState('day');
+
+      // Week view state
+      const [weekCards, setWeekCards]   = useState([]);
+      const [weekLoading, setWeekLoading] = useState(false);
+      const [weekError, setWeekError]   = useState('');
+      const [weekLoaded, setWeekLoaded] = useState(false);
 
       const load = useCallback(async (currentLoaded) => {
         setLoading(true);
@@ -346,7 +430,27 @@
         }
       }, []);
 
+      const loadWeeks = useCallback(async () => {
+        setWeekLoading(true);
+        setWeekError('');
+        try {
+          const rows    = await fetchAllRows();
+          const grouped = groupByWeek(rows);
+          setWeekCards(grouped.map((w, i) => ({ ...w, isInitial: i < 6 })));
+          setWeekLoaded(true);
+        } catch (e) {
+          setWeekError(`Failed to load: ${e.message}`);
+          console.error(e);
+        } finally {
+          setWeekLoading(false);
+        }
+      }, []);
+
       useEffect(() => { load(0); }, []);
+
+      useEffect(() => {
+        if (activeTab === 'week' && !weekLoaded && !weekLoading) loadWeeks();
+      }, [activeTab]);
 
       return (
         <div style={{
@@ -399,51 +503,66 @@
             </div>
           </div>
 
-          {/* ── Date cards with gap summaries ───────────────────────────── */}
-          {cards.map((card, i) => (
-            <React.Fragment key={card.date ? card.date.toISOString() : i}>
-              <DateCard data={card} colorIdx={i} animateNumbers={card.isInitial} />
-              {/* After each card, check if there's a dry-spell gap before the next */}
-              {i < cards.length - 1 && card.date && cards[i + 1].date && (
-                <GapSummary olderDate={cards[i + 1].date} newerDate={card.date} />
-              )}
-            </React.Fragment>
-          ))}
+          {/* ── Day view ────────────────────────────────────────────────── */}
+          {activeTab === 'day' && (<>
+            {cards.map((card, i) => (
+              <React.Fragment key={card.date ? card.date.toISOString() : i}>
+                <DateCard data={card} colorIdx={i} animateNumbers={card.isInitial} />
+                {i < cards.length - 1 && card.date && cards[i + 1].date && (
+                  <GapSummary olderDate={cards[i + 1].date} newerDate={card.date} />
+                )}
+              </React.Fragment>
+            ))}
+            {loading && (
+              <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Kodchasan',sans-serif", fontSize:14, padding:'8px 0' }}>
+                Loading…
+              </div>
+            )}
+            {error && (
+              <div style={{ textAlign:'center', color:'#e44', fontFamily:"'Kodchasan',sans-serif", fontSize:13, padding:'8px 0' }}>
+                {error}
+              </div>
+            )}
+            {!loading && hasMore && (
+              <button onClick={() => load(loadedCount)} style={{
+                fontFamily: "'Kodchasan', sans-serif",
+                fontSize: 16, fontWeight: 500,
+                color: '#155dfc', background: 'transparent',
+                border: '1.34px solid #155dfc',
+                borderRadius: 9.32, padding: '12px 0',
+                cursor: 'pointer', width: '100%', letterSpacing: -0.41,
+              }}>
+                Show Previous Dates
+              </button>
+            )}
+            {!loading && !hasMore && cards.length > 0 && (
+              <div style={{ textAlign:'center', color:'#99a1af', fontFamily:"'Kodchasan',sans-serif", fontSize:13 }}>
+                All dates loaded
+              </div>
+            )}
+          </>)}
 
-          {/* ── Loading ──────────────────────────────────────────────────── */}
-          {loading && (
-            <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Kodchasan',sans-serif", fontSize:14, padding:'8px 0' }}>
-              Loading…
-            </div>
-          )}
-
-          {/* ── Error ────────────────────────────────────────────────────── */}
-          {error && (
-            <div style={{ textAlign:'center', color:'#e44', fontFamily:"'Kodchasan',sans-serif", fontSize:13, padding:'8px 0' }}>
-              {error}
-            </div>
-          )}
-
-          {/* ── Show Previous Dates ──────────────────────────────────────── */}
-          {!loading && hasMore && (
-            <button onClick={() => load(loadedCount)} style={{
-              fontFamily: "'Kodchasan', sans-serif",
-              fontSize: 16, fontWeight: 500,
-              color: '#155dfc', background: 'transparent',
-              border: '1.34px solid #155dfc',
-              borderRadius: 9.32, padding: '12px 0',
-              cursor: 'pointer', width: '100%', letterSpacing: -0.41,
-            }}>
-              Show Previous Dates
-            </button>
-          )}
-
-          {/* ── All loaded ───────────────────────────────────────────────── */}
-          {!loading && !hasMore && cards.length > 0 && (
-            <div style={{ textAlign:'center', color:'#99a1af', fontFamily:"'Kodchasan',sans-serif", fontSize:13 }}>
-              All dates loaded
-            </div>
-          )}
+          {/* ── Week view ───────────────────────────────────────────────── */}
+          {activeTab === 'week' && (<>
+            {weekLoading && (
+              <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Kodchasan',sans-serif", fontSize:14, padding:'8px 0' }}>
+                Loading…
+              </div>
+            )}
+            {weekError && (
+              <div style={{ textAlign:'center', color:'#e44', fontFamily:"'Kodchasan',sans-serif", fontSize:13, padding:'8px 0' }}>
+                {weekError}
+              </div>
+            )}
+            {weekCards.map((week, i) => (
+              <WeekCard key={week.monday.toISOString()} data={week} colorIdx={i} animateNumbers={week.isInitial} />
+            ))}
+            {!weekLoading && weekLoaded && weekCards.length === 0 && (
+              <div style={{ textAlign:'center', color:'#99a1af', fontFamily:"'Kodchasan',sans-serif", fontSize:13 }}>
+                No data available
+              </div>
+            )}
+          </>)}
         </div>
       );
     }
