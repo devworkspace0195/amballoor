@@ -304,14 +304,16 @@
       // rawDiff 1 = consecutive days (no gap), 2 = exactly 1 skipped day, etc.
       if (rawDiff <= 1) return null;
 
+      const DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
       const MONS   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const fmt    = (d) => `${MONS[d.getMonth()]} ${d.getDate()}`;
+      const fmt    = (d) => `${DAYS[d.getDay()]}, ${MONS[d.getMonth()]} ${d.getDate()}`;
       const from   = new Date(olderDate.getTime() + DAY_MS);  // day after older card
       const to     = new Date(newerDate.getTime()  - DAY_MS); // day before newer card
+      const days   = rawDiff - 1;
 
       const text = rawDiff === 2
         ? `☀️ No rain on ${fmt(from)}`
-        : `☀️ No rain from ${fmt(from)} to ${fmt(to)}`;
+        : `☀️ No rain between ${fmt(to)} to ${fmt(from)} (${days} days)`;
 
       return (
         <div style={{
