@@ -221,7 +221,7 @@
     // staggerMs  – delay before this bar starts animating (creates waterfall effect)
     // animateNumbers – count numeral from 0 → value in sync with the bar
     function BarRow({ name, value, maxValue, accent, barBg, barBorder, staggerMs = 0, animateNumbers = false }) {
-      const target = maxValue > 0 ? Math.min((value / maxValue) * 100, 100) : 0;
+      const target = Math.min(value, 100);
 
       // Bar width: starts at 0, jumps to target after stagger → CSS handles ease-out
       const [barWidth, setBarWidth] = useState(0);
