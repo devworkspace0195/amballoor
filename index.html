@@ -6,7 +6,7 @@
   <title>Rainfall – Amballoor Panchayat</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Kodchasan:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -14,7 +14,7 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: 'Kodchasan', sans-serif;
+      font-family: 'Nunito', sans-serif;
       background: #e5e7eb;
       display: flex;
       justify-content: center;
@@ -273,7 +273,7 @@
             zIndex: 1, pointerEvents: 'none',
           }}>
             <span style={{
-              fontFamily: "'Kodchasan', sans-serif",
+              fontFamily: "'Nunito', sans-serif",
               fontSize: 13, fontWeight: 500,
               color: accent, whiteSpace: 'nowrap',
             }}>
@@ -287,7 +287,7 @@
             zIndex: 1,
           }}>
             <span style={{
-              fontFamily: "'Kodchasan', sans-serif",
+              fontFamily: "'Nunito', sans-serif",
               fontSize: 11, fontWeight: 500, color: '#888',
             }}>
               {disp > 0 ? disp : '–'}
@@ -304,21 +304,23 @@
       // rawDiff 1 = consecutive days (no gap), 2 = exactly 1 skipped day, etc.
       if (rawDiff <= 1) return null;
 
+      const DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
       const MONS   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const fmt    = (d) => `${MONS[d.getMonth()]} ${d.getDate()}`;
+      const fmt    = (d) => `${DAYS[d.getDay()]}, ${MONS[d.getMonth()]} ${d.getDate()}`;
       const from   = new Date(olderDate.getTime() + DAY_MS);  // day after older card
       const to     = new Date(newerDate.getTime()  - DAY_MS); // day before newer card
+      const days   = rawDiff - 1;
 
       const text = rawDiff === 2
         ? `☀️ No rain on ${fmt(from)}`
-        : `☀️ No rain from ${fmt(from)} to ${fmt(to)}`;
+        : `☀️ No rain between ${fmt(to)} to ${fmt(from)} (${days} days)`;
 
       return (
         <div style={{
           textAlign: 'center',
           color: '#c48c4c',           // warm amber from the design's own palette
           fontSize: 13,
-          fontFamily: "'Kodchasan', sans-serif",
+          fontFamily: "'Nunito', sans-serif",
           fontWeight: 500,
           padding: '2px 0',
           opacity: 0.85,
@@ -343,7 +345,7 @@
           border: '1.34px solid rgba(0,0,0,0.07)',
         }}>
           <div style={{
-            fontFamily: "'Kodchasan', sans-serif",
+            fontFamily: "'Nunito', sans-serif",
             fontSize: 16, fontWeight: 700,
             color: v.accent,
             letterSpacing: '0.066px',
@@ -377,7 +379,7 @@
           border: '1.34px solid rgba(0,0,0,0.07)',
         }}>
           <div style={{
-            fontFamily: "'Kodchasan', sans-serif",
+            fontFamily: "'Nunito', sans-serif",
             fontSize: 16, fontWeight: 700,
             color: v.accent,
             letterSpacing: '0.066px',
@@ -456,7 +458,7 @@
         <div style={{
           padding: '12px 16px 32px',
           display: 'flex', flexDirection: 'column', gap: 22,
-          fontFamily: "'Kodchasan', sans-serif",
+          fontFamily: "'Nunito', sans-serif",
           minHeight: '100vh', backgroundColor: '#fff',
         }}>
 
@@ -467,14 +469,14 @@
           }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{
-                fontFamily: "'Kodchasan', sans-serif",
+                fontFamily: "'Nunito', sans-serif",
                 fontSize: 24, fontWeight: 700,
                 color: '#155dfc', letterSpacing: 0.37,
               }}>
                 Amballoor
               </div>
               <div style={{
-                fontFamily: "'Kodchasan', sans-serif",
+                fontFamily: "'Nunito', sans-serif",
                 fontSize: 12, fontWeight: 400,
                 color: '#155dfc', letterSpacing: -0.41,
               }}>
@@ -491,7 +493,7 @@
                     <div style={{ width:8, height:8, borderRadius:'50%', backgroundColor:'#155dfc', flexShrink:0 }} />
                   )}
                   <span style={{
-                    fontFamily: "'Kodchasan', sans-serif",
+                    fontFamily: "'Nunito', sans-serif",
                     fontSize: 16, fontWeight: 500,
                     color: activeTab === tab ? '#155dfc' : '#99a1af',
                     letterSpacing: -0.41, lineHeight: 1.63,
@@ -514,18 +516,18 @@
               </React.Fragment>
             ))}
             {loading && (
-              <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Kodchasan',sans-serif", fontSize:14, padding:'8px 0' }}>
+              <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Nunito',sans-serif", fontSize:14, padding:'8px 0' }}>
                 Loading…
               </div>
             )}
             {error && (
-              <div style={{ textAlign:'center', color:'#e44', fontFamily:"'Kodchasan',sans-serif", fontSize:13, padding:'8px 0' }}>
+              <div style={{ textAlign:'center', color:'#e44', fontFamily:"'Nunito',sans-serif", fontSize:13, padding:'8px 0' }}>
                 {error}
               </div>
             )}
             {!loading && hasMore && (
               <button onClick={() => load(loadedCount)} style={{
-                fontFamily: "'Kodchasan', sans-serif",
+                fontFamily: "'Nunito', sans-serif",
                 fontSize: 16, fontWeight: 500,
                 color: '#155dfc', background: 'transparent',
                 border: '1.34px solid #155dfc',
@@ -536,7 +538,7 @@
               </button>
             )}
             {!loading && !hasMore && cards.length > 0 && (
-              <div style={{ textAlign:'center', color:'#99a1af', fontFamily:"'Kodchasan',sans-serif", fontSize:13 }}>
+              <div style={{ textAlign:'center', color:'#99a1af', fontFamily:"'Nunito',sans-serif", fontSize:13 }}>
                 All dates loaded
               </div>
             )}
@@ -545,12 +547,12 @@
           {/* ── Week view ───────────────────────────────────────────────── */}
           {activeTab === 'week' && (<>
             {weekLoading && (
-              <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Kodchasan',sans-serif", fontSize:14, padding:'8px 0' }}>
+              <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Nunito',sans-serif", fontSize:14, padding:'8px 0' }}>
                 Loading…
               </div>
             )}
             {weekError && (
-              <div style={{ textAlign:'center', color:'#e44', fontFamily:"'Kodchasan',sans-serif", fontSize:13, padding:'8px 0' }}>
+              <div style={{ textAlign:'center', color:'#e44', fontFamily:"'Nunito',sans-serif", fontSize:13, padding:'8px 0' }}>
                 {weekError}
               </div>
             )}
@@ -558,7 +560,7 @@
               <WeekCard key={week.monday.toISOString()} data={week} colorIdx={i} animateNumbers={week.isInitial} />
             ))}
             {!weekLoading && weekLoaded && weekCards.length === 0 && (
-              <div style={{ textAlign:'center', color:'#99a1af', fontFamily:"'Kodchasan',sans-serif", fontSize:13 }}>
+              <div style={{ textAlign:'center', color:'#99a1af', fontFamily:"'Nunito',sans-serif", fontSize:13 }}>
                 No data available
               </div>
             )}
