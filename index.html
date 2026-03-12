@@ -311,9 +311,11 @@
       const to     = new Date(newerDate.getTime()  - DAY_MS); // day before newer card
       const days   = rawDiff - 1;
 
-      const text = rawDiff === 2
-        ? `☀️ No rain on ${fmt(from)}`
-        : `☀️ No rain between ${fmt(to)} to ${fmt(from)} (${days} days)`;
+      const bold = (str) => <span style={{ fontWeight: 600 }}>{str}</span>;
+
+      const content = rawDiff === 2
+        ? <span>☀️ No rain on {bold(fmt(from))}</span>
+        : <span>☀️ No rain between {bold(fmt(to))} to {bold(fmt(from))} ({days} days)</span>;
 
       return (
         <div style={{
@@ -325,7 +327,7 @@
           padding: '2px 0',
           opacity: 0.85,
         }}>
-          {text}
+          {content}
         </div>
       );
     }
