@@ -406,6 +406,42 @@
       );
     }
 
+    /* ─── Location daily card (Browse by Week mode) ────────────────────────── */
+    const MONS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const DAYS_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+    function LocationBrowseCard({ name, days, colorIdx }) {
+      const v      = VARIANTS[colorIdx % 4];
+      const maxVal = Math.max(...days.map(d => d.value), 1);
+      return (
+        <div style={{
+          backgroundColor: v.bg, borderRadius: 9.32, padding: 16,
+          display: 'flex', flexDirection: 'column', gap: 12,
+          border: '1.34px solid rgba(0,0,0,0.07)',
+        }}>
+          <div style={{
+            fontFamily: "'Nunito', sans-serif",
+            fontSize: 15, fontWeight: 700, color: v.accent, letterSpacing: '0.066px',
+          }}>
+            {name.replace(/\w+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())}
+          </div>
+          <div>
+            {days.map((d, i) => {
+              const label = `${DAYS_SHORT[d.date.getDay()]} ${d.date.getDate()} ${MONS_SHORT[d.date.getMonth()]}`;
+              return (
+                <BarRow
+                  key={d.date.toISOString()}
+                  name={label} value={d.value} maxValue={maxVal}
+                  accent={v.accent} barBg={v.barBg} barBorder={v.barBorder}
+                  staggerMs={i * 40} animateNumbers={false}
+                />
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
     /* ─── App ──────────────────────────────────────────────────────────────── */
     function App() {
       const [cards, setCards]         = useState([]);
@@ -423,6 +459,7 @@
       const [weekLoaded, setWeekLoaded] = useState(false);
       const [weekViewMode, setWeekViewMode] = useState('all');   // 'all' | 'browse'
       const [selectedWeek, setSelectedWeek] = useState('');
+      const [allRows, setAllRows] = useState([]);
 
       const load = useCallback(async (currentLoaded) => {
         setLoading(true);
@@ -448,6 +485,7 @@
           const rows    = await fetchAllRows();
           const grouped = groupByWeek(rows);
           setWeekCards(grouped.map((w, i) => ({ ...w, isInitial: i < 6 })));
+          setAllRows(rows);
           setWeekLoaded(true);
         } catch (e) {
           setWeekError(`Failed to load: ${e.message}`);
@@ -617,10 +655,38 @@
             ))}
 
             {weekViewMode === 'browse' && (() => {
-              const key = selectedWeek || (weekCards[0] && weekCards[0].monday.toISOString().slice(0,10));
-              const week = weekCards.find(w => w.monday.toISOString().slice(0,10) === key);
-              const idx  = weekCards.findIndex(w => w.monday.toISOString().slice(0,10) === key);
-              return week ? <WeekCard data={week} colorIdx={idx} animateNumbers={false} /> : null;
+              const key    = selectedWeek || (weekCards[0] && weekCards[0].monday.toISOString().slice(0,10));
+              const week   = weekCards.find(w => w.monday.toISOString().slice(0,10) === key);
+              if (!week) return null;
+
+              // Build 7 dates Mon–Sun for this week
+              const weekDates = Array.from({ length: 7 }, (_, i) => {
+                const d = new Date(week.monday);
+                d.setDate(week.monday.getDate() + i);
+                return d;
+              });
+
+              // Collect all location names (sorted)
+              const locationNames = Object.keys(week.locations).sort((a, b) => a.localeCompare(b));
+
+              // Map raw rows by date key for quick lookup
+              const rowByDate = {};
+              for (const row of allRows) {
+                if (!row.date) continue;
+                const rKey = getWeekMonday(row.date).toISOString().slice(0,10);
+                if (rKey !== key) continue;
+                rowByDate[row.date.toISOString().slice(0,10)] = row;
+              }
+
+              return locationNames.map((locName, li) => {
+                const days = weekDates.map(d => ({
+                  date: d,
+                  value: Math.round(rowByDate[d.toISOString().slice(0,10)]?.locations[locName] ?? 0),
+                }));
+                return (
+                  <LocationBrowseCard key={locName} name={locName} days={days} colorIdx={li} />
+                );
+              });
             })()}
 
             {!weekLoading && weekLoaded && weekCards.length === 0 && (
