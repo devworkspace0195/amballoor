@@ -274,7 +274,7 @@
       }, []);
 
       return (
-        <div style={{ position: 'relative', height: 31, width: '100%' }}>
+        <div style={{ position: 'relative', height: 39, width: '100%' }}>
           {/* Coloured bar — CSS transition drives the ease-out grow animation */}
           <div style={{
             position: 'absolute', left: 0, top: 0,
@@ -543,7 +543,7 @@
       const maxVal = Math.ceil(peakVal / 5) * 5 + 10; // round up to next multiple of 5, +10 headroom
       const yTicks = Array.from({ length: Math.floor(maxVal / 5) + 1 }, (_, i) => i * 5).filter(t => t <= maxVal);
 
-      const W = 320, H = 170, PL = 28, PR = 6, PT = 12, PB = 30;
+      const W = 320, H = 213, PL = 28, PR = 6, PT = 12, PB = 30;
       const chartW = W - PL - PR, chartH = H - PT - PB;
 
       const cx = (i) => PL + (i / Math.max(pts.length - 1, 1)) * chartW;
@@ -737,7 +737,7 @@
       const [monthLoading, setMonthLoading] = useState(false);
       const [monthError, setMonthError]   = useState('');
       const [monthLoaded, setMonthLoaded] = useState(false);
-      const [monthViewMode, setMonthViewMode] = useState('browse'); // 'all' | 'browse'
+      const [monthViewMode, setMonthViewMode] = useState('all'); // 'all' | 'browse'
       const [selectedMonth, setSelectedMonth] = useState('');
       const [selectedLocation, setSelectedLocation] = useState('');
 
@@ -1023,7 +1023,7 @@
             {/* Toggle: Month / Location */}
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop: -11, marginBottom: 1 }}>
               <div style={{ display:'flex', background:'#f1f3f6', borderRadius:99, padding:2, gap:0 }}>
-                {[['browse','Month'],['all','Location']].map(([mode, label]) => (
+                {[['all','Month'],['browse','Location']].map(([mode, label]) => (
                   <button key={mode} onClick={() => setMonthViewMode(mode)} style={{
                     fontFamily: "'Nunito', sans-serif",
                     fontSize: 13, fontWeight: 600,
@@ -1037,8 +1037,8 @@
                   </button>
                 ))}
               </div>
-              {/* Month picker shown only in browse mode */}
-              {monthViewMode === 'browse' && monthCards.length > 0 && (
+              {/* Month picker shown in both modes */}
+              {monthCards.length > 0 && (
                 <div style={{ position: 'relative' }}>
                   <select
                     value={selectedMonth || monthCards[0].key}
@@ -1078,13 +1078,6 @@
               </div>
             )}
 
-            {monthViewMode === 'all' && (() => {
-              const globalMax = Math.max(...monthCards.flatMap(m => Object.values(m.locations)), 1);
-              return monthCards.map((month, i) => (
-                <MonthCard key={month.key} data={month} colorIdx={i} globalMax={globalMax} />
-              ));
-            })()}
-
             {monthViewMode === 'browse' && (() => {
               const key   = selectedMonth || (monthCards[0] && monthCards[0].key);
               const mData = monthCards.find(m => m.key === key);
@@ -1102,7 +1095,7 @@
 
               return (
                 <>
-                  {/* Location dropdown */}
+                  {/* Location picker */}
                   <div style={{ position:'relative' }}>
                     <select
                       value={activeLoc}
@@ -1124,7 +1117,6 @@
                     </div>
                   </div>
 
-                  {/* Line chart for selected location */}
                   <LocationLineChart
                     locName={activeLoc}
                     year={mData.year} month={mData.month}
@@ -1132,6 +1124,35 @@
                   />
                 </>
               );
+            })()}
+
+            {monthViewMode === 'all' && (() => {
+              const key   = selectedMonth || (monthCards[0] && monthCards[0].key);
+              const mData = monthCards.find(m => m.key === key);
+              if (!mData) return null;
+
+              const monthRows = allRows.filter(row => {
+                if (!row.date) return false;
+                const y = row.date.getFullYear(), mo = row.date.getMonth();
+                return `${y}-${String(mo+1).padStart(2,'0')}` === key;
+              }).sort((a, b) => a.date - b.date);
+
+              const locationNames = Object.keys(mData.locations).sort((a, b) => a.localeCompare(b));
+
+              return locationNames.map((locName, li) => {
+                const dayMap = {};
+                for (const row of monthRows) {
+                  const val = Math.round(row.locations[locName] ?? 0);
+                  if (val > 0) dayMap[row.date.getDate()] = val;
+                }
+                return (
+                  <MonthCalendarCard
+                    key={locName} name={locName}
+                    year={mData.year} month={mData.month}
+                    dayMap={dayMap} colorIdx={li}
+                  />
+                );
+              });
             })()}
 
             {!monthLoading && monthLoaded && monthCards.length === 0 && (
