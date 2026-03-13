@@ -178,6 +178,25 @@
       return parseRows(data);
     }
 
+    // Group an array of day rows into months, newest month first
+    function groupByMonth(rows) {
+      const months = {};
+      for (const row of rows) {
+        if (!row.date) continue;
+        const y = row.date.getFullYear();
+        const m = row.date.getMonth();
+        const key = `${y}-${String(m + 1).padStart(2, '0')}`;
+        if (!months[key]) months[key] = { year: y, month: m, key, locations: {}, days: 0 };
+        months[key].days += 1;
+        for (const [loc, val] of Object.entries(row.locations)) {
+          months[key].locations[loc] = (months[key].locations[loc] || 0) + val;
+        }
+      }
+      return Object.values(months).sort((a, b) => b.key.localeCompare(a.key));
+    }
+
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
     // Group an array of day rows into weeks (Mon–Sun), newest week first
     function groupByWeek(rows) {
       const weeks = {};
@@ -221,7 +240,7 @@
     // staggerMs  – delay before this bar starts animating (creates waterfall effect)
     // animateNumbers – count numeral from 0 → value in sync with the bar
     function BarRow({ name, value, maxValue, accent, barBg, barBorder, staggerMs = 0, animateNumbers = false }) {
-      const target = Math.min(value, 100);
+      const target = maxValue > 0 ? Math.round((value / maxValue) * 100) : 0;
 
       // Bar width: starts at 0, jumps to target after stagger → CSS handles ease-out
       const [barWidth, setBarWidth] = useState(0);
@@ -338,11 +357,11 @@
     }
 
     /* ─── Date card ────────────────────────────────────────────────────────── */
-    function DateCard({ data, colorIdx, animateNumbers }) {
+    function DateCard({ data, colorIdx, animateNumbers, globalMax }) {
       const v = VARIANTS[colorIdx % 4];
       // Sort locations A → Z
       const sorted = Object.entries(data.locations).sort(([a], [b]) => a.localeCompare(b));
-      const maxVal = Math.max(...sorted.map(([, n]) => n), 1);
+      const maxVal = globalMax || Math.max(...sorted.map(([, n]) => n), 1);
 
       return (
         <div style={{
@@ -442,6 +461,258 @@
       );
     }
 
+    /* ─── Month calendar card (Location browse mode) ───────────────────────── */
+    const CAL_DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+    function MonthCalendarCard({ name, year, month, dayMap, colorIdx }) {
+      const v = VARIANTS[colorIdx % 4];
+
+      // Build grid: pad from Monday of the week containing the 1st
+      const firstDay = new Date(year, month, 1);
+      // Monday=0 … Sunday=6
+      const startPad = (firstDay.getDay() + 6) % 7;
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const cells = [];
+      for (let i = 0; i < startPad; i++) cells.push(null);
+      for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+      return (
+        <div style={{
+          backgroundColor: v.bg, borderRadius: 9.32, padding: 16,
+          display: 'flex', flexDirection: 'column', gap: 12,
+          border: '1.34px solid rgba(0,0,0,0.07)',
+        }}>
+          <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:15, fontWeight:700, color:v.accent }}>
+            {name.replace(/\w+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())}
+          </div>
+
+          {/* Day-of-week header */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:2 }}>
+            {CAL_DAYS.map(d => (
+              <div key={d} style={{
+                fontFamily:"'Nunito',sans-serif", fontSize:10, fontWeight:600,
+                color: v.accent, textAlign:'center', opacity:0.6, paddingBottom:2,
+              }}>{d}</div>
+            ))}
+
+            {/* Date cells */}
+            {cells.map((day, i) => {
+              if (!day) return <div key={`pad-${i}`} />;
+              const val = dayMap[day];
+              const hasRain = val != null && val > 0;
+              return (
+                <div key={day} style={{
+                  display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                  borderRadius:6, padding:'4px 2px', minHeight:38,
+                  backgroundColor: hasRain ? v.barBg : 'transparent',
+                  border: hasRain ? `0.5px solid ${v.barBorder}` : '0.5px solid transparent',
+                }}>
+                  {hasRain ? (
+                    <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, fontWeight:700, color:v.accent, textAlign:'center', lineHeight:1.2 }}>
+                      {val}<span style={{ fontSize:8, fontWeight:500 }}>mm</span>
+                    </span>
+                  ) : (
+                    <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, fontWeight:500, color:'#bbb' }}>
+                      {day}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── Location line chart (Month → Location view) ──────────────────────── */
+    function LocationLineChart({ locName, year, month, monthRows }) {
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const allPts = Array.from({ length: daysInMonth }, (_, i) => {
+        const d = i + 1;
+        const row = monthRows.find(r => r.date.getDate() === d);
+        return { day: d, val: row ? Math.round(row.locations[locName] ?? 0) : 0 };
+      });
+
+      const [viewRange, setViewRange] = useState([0, allPts.length - 1]);
+      const [tooltip, setTooltip] = useState(null);
+      const touchRef = React.useRef({});
+      const containerRef = React.useRef(null);
+
+      const pts = allPts.slice(viewRange[0], viewRange[1] + 1);
+      const peakVal = Math.max(...pts.map(p => p.val), 1);
+      const maxVal = Math.ceil(peakVal / 5) * 5 + 10; // round up to next multiple of 5, +10 headroom
+      const yTicks = Array.from({ length: Math.floor(maxVal / 5) + 1 }, (_, i) => i * 5).filter(t => t <= maxVal);
+
+      const W = 320, H = 170, PL = 28, PR = 6, PT = 12, PB = 30;
+      const chartW = W - PL - PR, chartH = H - PT - PB;
+
+      const cx = (i) => PL + (i / Math.max(pts.length - 1, 1)) * chartW;
+      const cy = (v) => PT + chartH - (v / maxVal) * chartH;
+      const coords = pts.map((p, i) => ({ x: cx(i), y: cy(p.val) }));
+
+      let linePath = coords.length > 1 ? `M ${coords[0].x} ${coords[0].y}` : '';
+      for (let i = 1; i < coords.length; i++) {
+        const p = coords[i-1], c = coords[i];
+        const mx = (p.x + c.x) / 2;
+        linePath += ` C ${mx} ${p.y} ${mx} ${c.y} ${c.x} ${c.y}`;
+      }
+      const fillPath = coords.length > 1
+        ? `${linePath} L ${coords[coords.length-1].x} ${PT+chartH} L ${coords[0].x} ${PT+chartH} Z`
+        : '';
+      const gradId = `lcg-${locName.replace(/\W/g,'')}`;
+
+      // X labels: multiples of 5 (5, 10, 15 …) plus day 1
+      const xLabels = pts.filter(p => p.day === 1 || p.day % 5 === 0);
+
+      const getSvgIdx = (clientX) => {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return 0;
+        const svgX = (clientX - rect.left) / rect.width * W;
+        return Math.max(0, Math.min(pts.length - 1, Math.round((svgX - PL) / chartW * (pts.length - 1))));
+      };
+
+      const handleTouchStart = (e) => {
+        if (e.touches.length === 1) {
+          const idx = getSvgIdx(e.touches[0].clientX);
+          setTooltip(idx);
+          touchRef.current.single = { startX: e.touches[0].clientX, startRange: [...viewRange] };
+        } else if (e.touches.length === 2) {
+          touchRef.current.pinch = {
+            startDist: Math.abs(e.touches[0].clientX - e.touches[1].clientX),
+            startRange: [...viewRange],
+          };
+          setTooltip(null);
+        }
+      };
+
+      const handleTouchMove = (e) => {
+        e.preventDefault();
+        if (e.touches.length === 1 && touchRef.current.single) {
+          setTooltip(getSvgIdx(e.touches[0].clientX));
+          const dx = e.touches[0].clientX - touchRef.current.single.startX;
+          const [s, en] = touchRef.current.single.startRange;
+          const range = en - s;
+          const shift = Math.round(-dx / (containerRef.current?.getBoundingClientRect().width || 1) * range);
+          const newS = Math.max(0, Math.min(allPts.length - 1 - range, s + shift));
+          setViewRange([newS, newS + range]);
+        } else if (e.touches.length === 2 && touchRef.current.pinch) {
+          const dist = Math.abs(e.touches[0].clientX - e.touches[1].clientX);
+          const scale = touchRef.current.pinch.startDist / dist;
+          const [s, en] = touchRef.current.pinch.startRange;
+          const center = (s + en) / 2;
+          const half = Math.max(2, Math.min((allPts.length - 1) / 2, ((en - s) / 2) * scale));
+          setViewRange([Math.max(0, Math.round(center - half)), Math.min(allPts.length - 1, Math.round(center + half))]);
+        }
+      };
+
+      const handleTouchEnd = () => {
+        touchRef.current = {};
+        setTimeout(() => setTooltip(null), 1800);
+      };
+
+      return (
+        <div
+          ref={containerRef}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onMouseMove={(e) => setTooltip(getSvgIdx(e.clientX))}
+          onMouseLeave={() => setTooltip(null)}
+          style={{ touchAction:'none', userSelect:'none', margin:'0 -16px' }}
+        >
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width:'100%', display:'block' }}>
+            <defs>
+              <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#155dfc" stopOpacity="0.22" />
+                <stop offset="100%" stopColor="#155dfc" stopOpacity="0.01" />
+              </linearGradient>
+            </defs>
+
+            {/* Grid + Y labels */}
+            {yTicks.map((tick, i) => (
+              <g key={i}>
+                <line x1={PL} y1={cy(tick)} x2={W-PR} y2={cy(tick)} stroke="#e5e7eb" strokeWidth="0.7" strokeDasharray="3 3" />
+                <text x={PL-3} y={cy(tick)+3.5} textAnchor="end" fill="#99a1af" fontSize="7" fontFamily="Nunito,sans-serif">{tick}</text>
+              </g>
+            ))}
+
+            {/* Y axis label */}
+            <text x={7} y={PT + chartH/2} textAnchor="middle" fill="#99a1af" fontSize="7" fontFamily="Nunito,sans-serif"
+              transform={`rotate(-90,7,${PT + chartH/2})`}>Rain</text>
+
+            {/* Fill + line */}
+            <path d={fillPath} fill={`url(#${gradId})`} />
+            <path d={linePath} fill="none" stroke="#155dfc" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+
+            {/* Dots */}
+            {pts.map((p, i) => p.val > 0 && (
+              <circle key={i} cx={coords[i].x} cy={coords[i].y} r="2" fill="#155dfc" />
+            ))}
+
+            {/* X labels */}
+            {xLabels.map((p, i) => (
+              <text key={i} x={cx(pts.indexOf(p))} y={H-14} textAnchor="middle" fill="#99a1af" fontSize="7" fontFamily="Nunito,sans-serif">
+                {p.day}
+              </text>
+            ))}
+
+            {/* X axis label */}
+            <text x={PL + chartW/2} y={H-3} textAnchor="middle" fill="#99a1af" fontSize="7" fontFamily="Nunito,sans-serif">Dates</text>
+
+            {/* Tooltip crosshair */}
+            {tooltip !== null && tooltip < pts.length && (() => {
+              const p = pts[tooltip];
+              const x = cx(tooltip), y = cy(p.val);
+              const tipW = 52, tipH = 18, tipX = Math.min(W - PR - tipW, Math.max(PL, x - tipW/2));
+              return (
+                <>
+                  <line x1={x} y1={PT} x2={x} y2={PT+chartH} stroke="#155dfc" strokeWidth="0.8" strokeDasharray="3 2" opacity="0.5" />
+                  <circle cx={x} cy={y} r="4" fill="#155dfc" stroke="#fff" strokeWidth="1.5" />
+                  <rect x={tipX} y={y-26} width={tipW} height={tipH} rx={5} fill="#155dfc" />
+                  <text x={tipX + tipW/2} y={y-13} textAnchor="middle" fill="#fff" fontSize="8" fontWeight="bold" fontFamily="Nunito,sans-serif">
+                    {p.day} · {p.val}mm
+                  </text>
+                </>
+              );
+            })()}
+          </svg>
+        </div>
+      );
+    }
+
+    /* ─── Month card ───────────────────────────────────────────────────────── */
+    function MonthCard({ data, colorIdx, globalMax }) {
+      const v      = VARIANTS[colorIdx % 4];
+      const sorted = Object.entries(data.locations).sort(([a], [b]) => a.localeCompare(b));
+      const maxVal = globalMax || Math.max(...sorted.map(([, n]) => n), 1);
+
+      return (
+        <div style={{
+          backgroundColor: v.bg, borderRadius: 9.32, padding: 16,
+          display: 'flex', flexDirection: 'column', gap: 16,
+          border: '1.34px solid rgba(0,0,0,0.07)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <div style={{ fontFamily: "'Nunito', sans-serif", fontSize: 16, fontWeight: 700, color: v.accent }}>
+              {MONTH_NAMES[data.month]} {data.year}
+            </div>
+            <div style={{ fontFamily: "'Nunito', sans-serif", fontSize: 12, fontWeight: 500, color: v.accent, opacity: 0.6 }}>
+              {data.days} days
+            </div>
+          </div>
+          <div>
+            {sorted.map(([name, value], i) => (
+              <BarRow
+                key={name} name={name} value={Math.round(value)} maxValue={Math.round(maxVal)}
+                accent={v.accent} barBg={v.barBg} barBorder={v.barBorder}
+                staggerMs={i * 50} animateNumbers={false}
+              />
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     /* ─── App ──────────────────────────────────────────────────────────────── */
     function App() {
       const [cards, setCards]         = useState([]);
@@ -460,6 +731,15 @@
       const [weekViewMode, setWeekViewMode] = useState('all');   // 'all' | 'browse'
       const [selectedWeek, setSelectedWeek] = useState('');
       const [allRows, setAllRows] = useState([]);
+
+      // Month view state
+      const [monthCards, setMonthCards]   = useState([]);
+      const [monthLoading, setMonthLoading] = useState(false);
+      const [monthError, setMonthError]   = useState('');
+      const [monthLoaded, setMonthLoaded] = useState(false);
+      const [monthViewMode, setMonthViewMode] = useState('browse'); // 'all' | 'browse'
+      const [selectedMonth, setSelectedMonth] = useState('');
+      const [selectedLocation, setSelectedLocation] = useState('');
 
       const load = useCallback(async (currentLoaded) => {
         setLoading(true);
@@ -495,10 +775,27 @@
         }
       }, []);
 
+      const loadMonths = useCallback(async () => {
+        setMonthLoading(true);
+        setMonthError('');
+        try {
+          const rows    = allRows.length > 0 ? allRows : await fetchAllRows();
+          if (allRows.length === 0) setAllRows(rows);
+          const grouped = groupByMonth(rows);
+          setMonthCards(grouped);
+          setMonthLoaded(true);
+        } catch (e) {
+          setMonthError(`Failed to load: ${e.message}`);
+        } finally {
+          setMonthLoading(false);
+        }
+      }, [allRows]);
+
       useEffect(() => { load(0); }, []);
 
       useEffect(() => {
         if (activeTab === 'week' && !weekLoaded && !weekLoading) loadWeeks();
+        if (activeTab === 'month' && !monthLoaded && !monthLoading) loadMonths();
       }, [activeTab]);
 
       return (
@@ -563,14 +860,17 @@
 
           {/* ── Day view ────────────────────────────────────────────────── */}
           {activeTab === 'day' && (<>
-            {cards.map((card, i) => (
+            {(() => {
+              const globalMax = Math.max(...cards.flatMap(c => Object.values(c.locations)), 1);
+              return cards.map((card, i) => (
               <React.Fragment key={card.date ? card.date.toISOString() : i}>
-                <DateCard data={card} colorIdx={i} animateNumbers={card.isInitial} />
+                <DateCard data={card} colorIdx={i} animateNumbers={card.isInitial} globalMax={globalMax} />
                 {i < cards.length - 1 && card.date && cards[i + 1].date && (
                   <GapSummary olderDate={cards[i + 1].date} newerDate={card.date} />
                 )}
               </React.Fragment>
-            ))}
+            ));
+            })()}
             {loading && (
               <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Nunito',sans-serif", fontSize:14, padding:'8px 0' }}>
                 Loading…
@@ -712,6 +1012,129 @@
             })()}
 
             {!weekLoading && weekLoaded && weekCards.length === 0 && (
+              <div style={{ textAlign:'center', color:'#99a1af', fontFamily:"'Nunito',sans-serif", fontSize:13 }}>
+                No data available
+              </div>
+            )}
+          </>)}
+
+          {/* ── Month view ──────────────────────────────────────────────── */}
+          {activeTab === 'month' && (<>
+            {/* Toggle: Month / Location */}
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop: -11, marginBottom: 1 }}>
+              <div style={{ display:'flex', background:'#f1f3f6', borderRadius:99, padding:2, gap:0 }}>
+                {[['browse','Month'],['all','Location']].map(([mode, label]) => (
+                  <button key={mode} onClick={() => setMonthViewMode(mode)} style={{
+                    fontFamily: "'Nunito', sans-serif",
+                    fontSize: 13, fontWeight: 600,
+                    padding: '5px 16px', borderRadius: 99, border: 'none',
+                    cursor: 'pointer', transition: 'all 0.18s',
+                    background: monthViewMode === mode ? '#fff' : 'transparent',
+                    color: monthViewMode === mode ? '#155dfc' : '#99a1af',
+                    boxShadow: monthViewMode === mode ? '0 1px 4px rgba(0,0,0,0.10)' : 'none',
+                  }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {/* Month picker shown only in browse mode */}
+              {monthViewMode === 'browse' && monthCards.length > 0 && (
+                <div style={{ position: 'relative' }}>
+                  <select
+                    value={selectedMonth || monthCards[0].key}
+                    onChange={e => setSelectedMonth(e.target.value)}
+                    style={{ position:'absolute', inset:0, opacity:0, cursor:'pointer', width:'100%', height:'100%' }}
+                  >
+                    {monthCards.map(m => (
+                      <option key={m.key} value={m.key}>{MONTH_NAMES[m.month]} {m.year}</option>
+                    ))}
+                  </select>
+                  <div style={{
+                    borderRadius:99, border:'1.34px solid #d1d5db', background:'#fff',
+                    display:'flex', alignItems:'center', gap:6, padding:'5px 12px', pointerEvents:'none',
+                  }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1a1a2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                      <line x1="16" y1="2" x2="16" y2="6"/>
+                      <line x1="8" y1="2" x2="8" y2="6"/>
+                      <line x1="3" y1="10" x2="21" y2="10"/>
+                    </svg>
+                    <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:'#1a1a2e' }}>
+                      {(() => { const m = monthCards.find(m => m.key === (selectedMonth || monthCards[0].key)); return m ? `${MONTH_NAMES[m.month]} ${m.year}` : ''; })()}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {monthLoading && (
+              <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Nunito',sans-serif", fontSize:14, padding:'8px 0' }}>
+                Loading…
+              </div>
+            )}
+            {monthError && (
+              <div style={{ textAlign:'center', color:'#e44', fontFamily:"'Nunito',sans-serif", fontSize:13, padding:'8px 0' }}>
+                {monthError}
+              </div>
+            )}
+
+            {monthViewMode === 'all' && (() => {
+              const globalMax = Math.max(...monthCards.flatMap(m => Object.values(m.locations)), 1);
+              return monthCards.map((month, i) => (
+                <MonthCard key={month.key} data={month} colorIdx={i} globalMax={globalMax} />
+              ));
+            })()}
+
+            {monthViewMode === 'browse' && (() => {
+              const key   = selectedMonth || (monthCards[0] && monthCards[0].key);
+              const mData = monthCards.find(m => m.key === key);
+              if (!mData) return null;
+
+              const monthRows = allRows.filter(row => {
+                if (!row.date) return false;
+                const y = row.date.getFullYear(), mo = row.date.getMonth();
+                return `${y}-${String(mo+1).padStart(2,'0')}` === key;
+              }).sort((a, b) => a.date - b.date);
+
+              const locationNames = Object.keys(mData.locations).sort((a, b) => a.localeCompare(b));
+              const activeLoc = selectedLocation && locationNames.includes(selectedLocation)
+                ? selectedLocation : locationNames[0];
+
+              return (
+                <>
+                  {/* Location dropdown */}
+                  <div style={{ position:'relative' }}>
+                    <select
+                      value={activeLoc}
+                      onChange={e => setSelectedLocation(e.target.value)}
+                      style={{ position:'absolute', inset:0, opacity:0, cursor:'pointer', width:'100%', height:'100%' }}
+                    >
+                      {locationNames.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <div style={{
+                      borderRadius:99, border:'1.34px solid #d1d5db', background:'#fff',
+                      display:'inline-flex', alignItems:'center', gap:6, padding:'5px 14px', pointerEvents:'none',
+                    }}>
+                      <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:'#1a1a2e' }}>
+                        {activeLoc.replace(/\w+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())}
+                      </span>
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                        <path d="M2 3.5L5 6.5L8 3.5" stroke="#1a1a2e" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </div>
+                  </div>
+
+                  {/* Line chart for selected location */}
+                  <LocationLineChart
+                    locName={activeLoc}
+                    year={mData.year} month={mData.month}
+                    monthRows={monthRows}
+                  />
+                </>
+              );
+            })()}
+
+            {!monthLoading && monthLoaded && monthCards.length === 0 && (
               <div style={{ textAlign:'center', color:'#99a1af', fontFamily:"'Nunito',sans-serif", fontSize:13 }}>
                 No data available
               </div>
