@@ -283,9 +283,19 @@
           {/* Rainfall numeral */}
           <div style={{
             position: 'absolute', right: 8, top: 0,
-            height: '100%', display: 'flex', alignItems: 'center',
+            height: '100%', display: 'flex', alignItems: 'center', gap: 4,
             zIndex: 1,
           }}>
+            {disp > 0 && disp <= 17 && (
+              <span style={{ fontFamily: "'Nunito', sans-serif", fontSize: 11, fontWeight: 500, color: '#888' }}>
+                Drizzle ☔️
+              </span>
+            )}
+            {disp > 50 && (
+              <span style={{ fontFamily: "'Nunito', sans-serif", fontSize: 11, fontWeight: 500, color: '#888' }}>
+                Heavy ⛈️
+              </span>
+            )}
             <span style={{
               fontFamily: "'Nunito', sans-serif",
               fontSize: 11, fontWeight: 500, color: '#888',
