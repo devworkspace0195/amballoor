@@ -255,7 +255,7 @@
       }, []);
 
       return (
-        <div style={{ position: 'relative', height: 41, width: '100%' }}>
+        <div style={{ position: 'relative', height: 31, width: '100%' }}>
           {/* Coloured bar — CSS transition drives the ease-out grow animation */}
           <div style={{
             position: 'absolute', left: 0, top: 0,
@@ -511,23 +511,31 @@
 
           {/* ── Header card ─────────────────────────────────────────────── */}
           <div style={{
-            borderRadius: 9.32, padding: 16,
-            display: 'flex', flexDirection: 'column', gap: 13,
+            borderRadius: 9.32, padding: 0,
+            display: 'flex', flexDirection: 'column', gap:16,
           }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <div style={{
-                fontFamily: "'Nunito', sans-serif",
-                fontSize: 24, fontWeight: 700,
-                color: '#155dfc', letterSpacing: 0.37,
-              }}>
-                Amballoor
-              </div>
-              <div style={{
-                fontFamily: "'Nunito', sans-serif",
-                fontSize: 12, fontWeight: 400,
-                color: '#155dfc', letterSpacing: -0.41,
-              }}>
-                Panchayat
+            <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+              <img
+                src="logo (8).png"
+                alt="Government of Kerala emblem"
+                style={{ width: 52, height: 'auto', flexShrink: 0, marginTop:10 }}
+              />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{
+                  fontFamily: "'Nunito', sans-serif",
+                  fontSize: 24, fontWeight: 700,
+                  color: '#00000', letterSpacing: 0.37,
+                }}>
+                  Amballoor
+                </div>
+                <div style={{
+                  fontFamily: "'Nunito', sans-serif",
+                  fontSize: 16, fontWeight: 400,
+                
+                  color: '##00000', letterSpacing: -0.41, lineHeight:0.5
+                }}>
+                  Panchayat
+                </div>
               </div>
             </div>
 
