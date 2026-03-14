@@ -251,7 +251,7 @@
         // Let the browser paint the 0-width bar first, then trigger the transition
         const t = setTimeout(() => setBarWidth(target), staggerMs + 30);
         return () => clearTimeout(t);
-      }, []);
+      }, [target]);
 
       useEffect(() => {
         if (!animateNumbers) { setDisp(value); return; }
@@ -281,7 +281,6 @@
             height: '100%',
             width: `${barWidth}%`,
             backgroundColor: barBg,
-            borderBottom: `0.5px solid ${barBorder}`,
             transition: 'width 0.75s cubic-bezier(0.4, 0, 0.2, 1)',
           }} />
           {/* Location label */}
@@ -378,7 +377,7 @@
           }}>
             {formatDate(data.date)}
           </div>
-          <div>
+          <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
             {sorted.map(([name, value], i) => (
               <BarRow
                 key={name} name={name} value={value} maxValue={maxVal}
@@ -392,10 +391,10 @@
     }
 
     /* ─── Week card ────────────────────────────────────────────────────────── */
-    function WeekCard({ data, colorIdx, animateNumbers }) {
+    function WeekCard({ data, colorIdx, animateNumbers, globalMax }) {
       const v      = VARIANTS[colorIdx % 4];
       const sorted = Object.entries(data.locations).sort(([a], [b]) => a.localeCompare(b));
-      const maxVal = Math.max(...sorted.map(([, n]) => n), 1);
+      const maxVal = globalMax || Math.max(...sorted.map(([, n]) => n), 1);
 
       return (
         <div style={{
@@ -412,7 +411,7 @@
           }}>
             {formatWeekRange(data.monday)}
           </div>
-          <div>
+          <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
             {sorted.map(([name, value], i) => (
               <BarRow
                 key={name} name={name} value={Math.round(value)} maxValue={Math.round(maxVal)}
@@ -429,9 +428,9 @@
     const MONS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const DAYS_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-    function LocationBrowseCard({ name, days, colorIdx }) {
+    function LocationBrowseCard({ name, days, colorIdx, globalMax }) {
       const v      = VARIANTS[colorIdx % 4];
-      const maxVal = Math.max(...days.map(d => d.value), 1);
+      const maxVal = globalMax || Math.max(...days.map(d => d.value), 1);
       return (
         <div style={{
           backgroundColor: v.bg, borderRadius: 9.32, padding: 16,
@@ -444,7 +443,7 @@
           }}>
             {name.replace(/\w+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())}
           </div>
-          <div>
+          <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
             {days.map((d, i) => {
               const label = `${DAYS_SHORT[d.date.getDay()]} ${d.date.getDate()} ${MONS_SHORT[d.date.getMonth()]}`;
               return (
@@ -466,6 +465,7 @@
 
     function MonthCalendarCard({ name, year, month, dayMap, colorIdx }) {
       const v = VARIANTS[colorIdx % 4];
+      const [tooltipDay, setTooltipDay] = useState(null);
 
       // Build grid: pad from Monday of the week containing the 1st
       const firstDay = new Date(year, month, 1);
@@ -475,6 +475,8 @@
       const cells = [];
       for (let i = 0; i < startPad; i++) cells.push(null);
       for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+      const maxVal = Math.max(...Object.values(dayMap).filter(v => v > 0), 1);
 
       return (
         <div style={{
@@ -500,21 +502,55 @@
               if (!day) return <div key={`pad-${i}`} />;
               const val = dayMap[day];
               const hasRain = val != null && val > 0;
+              const fillPct = hasRain ? Math.round((val / maxVal) * 100) : 0;
+              const showTooltip = tooltipDay === day;
               return (
-                <div key={day} style={{
-                  display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-                  borderRadius:6, padding:'4px 2px', minHeight:38,
-                  backgroundColor: hasRain ? v.barBg : 'transparent',
-                  border: hasRain ? `0.5px solid ${v.barBorder}` : '0.5px solid transparent',
-                }}>
-                  {hasRain ? (
-                    <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, fontWeight:700, color:v.accent, textAlign:'center', lineHeight:1.2 }}>
-                      {val}<span style={{ fontSize:8, fontWeight:500 }}>mm</span>
-                    </span>
-                  ) : (
-                    <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, fontWeight:500, color:'#bbb' }}>
-                      {day}
-                    </span>
+                <div key={day}
+                  onClick={() => hasRain && setTooltipDay(showTooltip ? null : day)}
+                  style={{
+                    position: 'relative', overflow: 'visible',
+                    display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                    borderRadius:6, padding:'4px 2px', minHeight:38,
+                    backgroundColor: 'transparent',
+                    border: hasRain ? `0.5px solid ${v.barBorder}` : '0.5px solid transparent',
+                    cursor: hasRain ? 'pointer' : 'default',
+                  }}>
+                  {/* Fill bar — clip overflow inside */}
+                  {hasRain && (
+                    <div style={{
+                      position:'absolute', left:0, top:0, bottom:0, overflow:'hidden',
+                      width:'100%', borderRadius:6,
+                    }}>
+                      <div style={{
+                        position:'absolute', left:0, top:0, bottom:0,
+                        width:`${fillPct}%`, backgroundColor: v.barBg,
+                      }} />
+                    </div>
+                  )}
+                  <span style={{ position:'relative', zIndex:1, fontFamily:"'Nunito',sans-serif", textAlign:'center', lineHeight:1.2,
+                    fontSize: hasRain ? 10 : 11,
+                    fontWeight: hasRain ? 700 : 500,
+                    color: hasRain ? v.accent : '#bbb',
+                  }}>
+                    {day}
+                  </span>
+                  {/* Tooltip */}
+                  {showTooltip && (
+                    <div style={{
+                      position:'absolute', bottom:'calc(100% + 5px)', left:'50%',
+                      transform:'translateX(-50%)',
+                      backgroundColor:'#1a1a2e', color:'#fff',
+                      fontSize:11, fontWeight:600, whiteSpace:'nowrap',
+                      borderRadius:6, padding:'3px 8px', zIndex:20,
+                      pointerEvents:'none',
+                    }}>
+                      {val}mm
+                      <div style={{
+                        position:'absolute', top:'100%', left:'50%', transform:'translateX(-50%)',
+                        borderLeft:'4px solid transparent', borderRight:'4px solid transparent',
+                        borderTop:'4px solid #1a1a2e',
+                      }} />
+                    </div>
                   )}
                 </div>
               );
@@ -700,7 +736,7 @@
               {data.days} days
             </div>
           </div>
-          <div>
+          <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
             {sorted.map(([name, value], i) => (
               <BarRow
                 key={name} name={name} value={Math.round(value)} maxValue={Math.round(maxVal)}
@@ -791,7 +827,11 @@
         }
       }, [allRows]);
 
-      useEffect(() => { load(0); }, []);
+      useEffect(() => {
+        load(0);
+        // Fetch all rows on mount so global max is available from the start
+        fetchAllRows().then(rows => setAllRows(rows)).catch(() => {});
+      }, []);
 
       useEffect(() => {
         if (activeTab === 'week' && !weekLoaded && !weekLoading) loadWeeks();
@@ -839,7 +879,7 @@
           </div>
 
           {/* Tabs */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, position: 'sticky', top: 0, backgroundColor: '#fff', zIndex: 10, padding: '8px 16px', margin: '0 -16px',  }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, position: 'sticky', top: 0, backgroundColor: '#fff', zIndex: 10, padding: '8px 16px 0', margin: '0 -16px',  }}>
             {TABS.map((tab) => (
               <button key={tab} onClick={() => setActiveTab(tab)}
                 style={{ display:'flex', alignItems:'center', gap:4, background:'none', border:'none', cursor:'pointer', padding:0 }}>
@@ -858,10 +898,39 @@
             ))}
           </div>
 
+          {/* ── Highest rainfall banner ────────────────────────────────── */}
+          {(() => {
+            if (activeTab === 'week' || activeTab === 'month') return null;
+            if (allRows.length === 0) return null;
+            let best = { val: 0, loc: '', date: null };
+            for (const row of allRows) {
+              for (const [loc, val] of Object.entries(row.locations)) {
+                if (val > best.val) best = { val, loc, date: row.date };
+              }
+            }
+            if (best.val === 0) return null;
+            const day = best.date.getDate();
+            const mon = best.date.toLocaleString('en-IN', { month: 'short' });
+            return (
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                backgroundColor: '#f3f4f6', borderRadius: 8,
+                padding: '4px 10px', alignSelf: 'flex-start',
+              }}>
+                <span style={{ fontSize: 11 }}>⛈️</span>
+                <span style={{ fontSize: 11, fontWeight: 500, color: '#374151' }}>
+                  Highest rainfall on <strong>{day} {mon}</strong>, {best.loc} – <strong>{best.val}mm</strong>
+                </span>
+              </div>
+            );
+          })()}
+
           {/* ── Day view ────────────────────────────────────────────────── */}
           {activeTab === 'day' && (<>
             {(() => {
-              const globalMax = Math.max(...cards.flatMap(c => Object.values(c.locations)), 1);
+              const globalMax = allRows.length > 0
+                ? Math.max(...allRows.flatMap(r => Object.values(r.locations)), 1)
+                : Math.max(...cards.flatMap(c => Object.values(c.locations)), 1);
               return cards.map((card, i) => (
               <React.Fragment key={card.date ? card.date.toISOString() : i}>
                 <DateCard data={card} colorIdx={i} animateNumbers={card.isInitial} globalMax={globalMax} />
@@ -961,6 +1030,29 @@
               )}
             </div>
 
+            {/* Highest rainfall pill — below toggle in week view */}
+            {weekCards.length > 0 && (() => {
+              let best = { val: 0, loc: '', monday: null };
+              for (const wc of weekCards) {
+                for (const [loc, val] of Object.entries(wc.locations)) {
+                  if (val > best.val) best = { val, loc, monday: wc.monday };
+                }
+              }
+              if (best.val === 0) return null;
+              return (
+                <div style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  backgroundColor: '#f3f4f6', borderRadius: 8,
+                  padding: '4px 10px', marginBottom: 8, alignSelf: 'flex-start',
+                }}>
+                  <span style={{ fontSize: 11 }}>⛈️</span>
+                  <span style={{ fontSize: 11, fontWeight: 500, color: '#374151' }}>
+                    Highest rainfall <strong>{formatWeekRange(best.monday)}</strong>, {best.loc} – <strong>{best.val}mm</strong>
+                  </span>
+                </div>
+              );
+            })()}
+
             {weekLoading && (
               <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Nunito',sans-serif", fontSize:14, padding:'8px 0' }}>
                 Loading…
@@ -972,9 +1064,12 @@
               </div>
             )}
 
-            {weekViewMode === 'all' && weekCards.map((week, i) => (
-              <WeekCard key={week.monday.toISOString()} data={week} colorIdx={i} animateNumbers={week.isInitial} />
-            ))}
+            {weekViewMode === 'all' && (() => {
+              const globalMax = Math.max(...weekCards.flatMap(w => Object.values(w.locations)), 1);
+              return weekCards.map((week, i) => (
+                <WeekCard key={week.monday.toISOString()} data={week} colorIdx={i} animateNumbers={week.isInitial} globalMax={globalMax} />
+              ));
+            })()}
 
             {weekViewMode === 'browse' && (() => {
               const key    = selectedWeek || (weekCards[0] && weekCards[0].monday.toISOString().slice(0,10));
@@ -1000,13 +1095,17 @@
                 rowByDate[row.date.toISOString().slice(0,10)] = row;
               }
 
+              const allDayVals = locationNames.flatMap(locName =>
+                weekDates.map(d => Math.round(rowByDate[d.toISOString().slice(0,10)]?.locations[locName] ?? 0))
+              );
+              const globalMax = Math.max(...allDayVals, 1);
               return locationNames.map((locName, li) => {
                 const days = weekDates.map(d => ({
                   date: d,
                   value: Math.round(rowByDate[d.toISOString().slice(0,10)]?.locations[locName] ?? 0),
                 }));
                 return (
-                  <LocationBrowseCard key={locName} name={locName} days={days} colorIdx={li} />
+                  <LocationBrowseCard key={locName} name={locName} days={days} colorIdx={li} globalMax={globalMax} />
                 );
               });
             })()}
@@ -1066,6 +1165,30 @@
                 </div>
               )}
             </div>
+
+            {/* Highest rainfall pill — below toggle in month view */}
+            {monthCards.length > 0 && (() => {
+              let best = { val: 0, loc: '', month: 0, year: 0 };
+              for (const mc of monthCards) {
+                for (const [loc, val] of Object.entries(mc.locations)) {
+                  if (val > best.val) best = { val, loc, month: mc.month, year: mc.year };
+                }
+              }
+              if (best.val === 0) return null;
+              const label = `${MONTH_NAMES[best.month]} ${best.year}`;
+              return (
+                <div style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  backgroundColor: '#f3f4f6', borderRadius: 8,
+                  padding: '4px 10px', marginBottom: 8, alignSelf: 'flex-start',
+                }}>
+                  <span style={{ fontSize: 11 }}>⛈️</span>
+                  <span style={{ fontSize: 11, fontWeight: 500, color: '#374151' }}>
+                    Highest rainfall <strong>{label}</strong>, {best.loc} – <strong>{best.val}mm</strong>
+                  </span>
+                </div>
+              );
+            })()}
 
             {monthLoading && (
               <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Nunito',sans-serif", fontSize:14, padding:'8px 0' }}>
