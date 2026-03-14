@@ -239,7 +239,7 @@
     /* ─── Bar row ──────────────────────────────────────────────────────────── */
     // staggerMs  – delay before this bar starts animating (creates waterfall effect)
     // animateNumbers – count numeral from 0 → value in sync with the bar
-    function BarRow({ name, value, maxValue, accent, barBg, barBorder, staggerMs = 0, animateNumbers = false, onTap, tooltipData, tapPos, dimmed }) {
+    function BarRow({ name, value, maxValue, accent, barBg, barBorder, staggerMs = 0, animateNumbers = false, onTap, tooltipData, tapPos, dimmed, tooltipTitle = 'PREVIOUS DATES' }) {
       const target = maxValue > 0 ? Math.round((value / maxValue) * 100) : 0;
 
       // Bar width: starts at 0, jumps to target after stagger → CSS handles ease-out
@@ -334,16 +334,17 @@
                 boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
               }}>
                 <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 4, letterSpacing: 0.3 }}>
-                  PREVIOUS DATES
+                  {tooltipTitle}
                 </div>
-                {tooltipData.map(({ date, val }) => {
-                  const d = date.getDate();
-                  const mon = date.toLocaleString('en-IN', { month: 'short' });
+                {tooltipData.map((entry, idx) => {
+                  const rowLabel = entry.label
+                    ? entry.label
+                    : (() => { const d = entry.date.getDate(); const mon = entry.date.toLocaleString('en-IN', { month: 'short' }); return `${d} ${mon}`; })();
                   return (
-                    <div key={d} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 11, fontWeight: 500 }}>
-                      <span style={{ color: '#d1d5db' }}>{d} {mon}</span>
-                      <span style={{ fontWeight: 700, color: val > 0 ? '#93c5fd' : '#6b7280' }}>
-                        {val > 0 ? `${val}mm` : '☀️ no rain'}
+                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 11, fontWeight: 500 }}>
+                      <span style={{ color: '#d1d5db' }}>{rowLabel}</span>
+                      <span style={{ fontWeight: 700, color: entry.val > 0 ? '#93c5fd' : '#6b7280' }}>
+                        {entry.val > 0 ? `${entry.val}mm` : '☀️ no rain'}
                       </span>
                     </div>
                   );
@@ -389,6 +390,29 @@
           fontWeight: 500,
           padding: '2px 0',
           opacity: 0.85,
+        }}>
+          {content}
+        </div>
+      );
+    }
+
+    /* ─── Week gap summary (dry spell between two week cards) ──────────────── */
+    function WeekGapSummary({ olderMonday, newerMonday }) {
+      const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+      const diff = Math.round((newerMonday - olderMonday) / WEEK_MS);
+      if (diff <= 1) return null;
+      const missing = diff - 1;
+      const bold = (str) => <span style={{ fontWeight: 600 }}>{str}</span>;
+      const firstMissing = new Date(olderMonday.getTime() + WEEK_MS);
+      const lastMissing  = new Date(newerMonday.getTime() - WEEK_MS);
+      const content = missing === 1
+        ? <span>☀️ No rain in the week of {bold(formatWeekRange(firstMissing))}</span>
+        : <span>☀️ No rain for {bold(`${missing} weeks`)} ({formatWeekRange(firstMissing)} – {formatWeekRange(lastMissing)})</span>;
+      return (
+        <div style={{
+          textAlign: 'center', color: '#c48c4c',
+          fontSize: 13, fontFamily: "'Nunito', sans-serif",
+          fontWeight: 500, padding: '2px 0', opacity: 0.85,
         }}>
           {content}
         </div>
@@ -466,10 +490,42 @@
     }
 
     /* ─── Week card ────────────────────────────────────────────────────────── */
-    function WeekCard({ data, colorIdx, animateNumbers, globalMax }) {
+    function WeekCard({ data, colorIdx, animateNumbers, globalMax, allWeekCards }) {
       const v      = VARIANTS[colorIdx % 4];
       const sorted = Object.entries(data.locations).sort(([a], [b]) => a.localeCompare(b));
       const maxVal = globalMax || Math.max(...sorted.map(([, n]) => n), 1);
+      const [tooltipState, setTooltipState] = useState(null);
+
+      useEffect(() => {
+        if (!tooltipState) return;
+        const dismiss = () => setTooltipState(null);
+        document.addEventListener('click', dismiss);
+        window.addEventListener('scroll', dismiss, true);
+        return () => {
+          document.removeEventListener('click', dismiss);
+          window.removeEventListener('scroll', dismiss, true);
+        };
+      }, [tooltipState]);
+
+      const getPrevWeeks = (locName) => {
+        const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+        return [1, 2].map(offset => {
+          const prevMonday = new Date(data.monday.getTime() - offset * WEEK_MS);
+          const found = allWeekCards && allWeekCards.find(
+            w => w.monday.toISOString().slice(0, 10) === prevMonday.toISOString().slice(0, 10)
+          );
+          return {
+            label: formatWeekRange(prevMonday),
+            val: found ? Math.round(found.locations[locName] ?? 0) : 0,
+          };
+        });
+      };
+
+      const handleTap = (name, e) => {
+        e.stopPropagation();
+        if (tooltipState?.loc === name) { setTooltipState(null); return; }
+        setTooltipState({ loc: name, x: e.clientX, y: e.clientY });
+      };
 
       return (
         <div style={{
@@ -490,13 +546,24 @@
             <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, fontWeight:400, color:v.accent, opacity:0.6, marginRight:8, width:28, textAlign:'right', textDecoration:'underline' }}>mm</span>
           </div>
           <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
-            {sorted.map(([name, value], i) => (
-              <BarRow
-                key={name} name={name} value={Math.round(value)} maxValue={Math.round(maxVal)}
-                accent={v.accent} barBg={v.barBg} barBorder={v.barBorder}
-                staggerMs={i * 50} animateNumbers={animateNumbers}
-              />
-            ))}
+            {sorted.map(([name, value], i) => {
+              const prevWeeks = tooltipState?.loc === name ? getPrevWeeks(name) : null;
+              const tapPos    = tooltipState?.loc === name ? { x: tooltipState.x, y: tooltipState.y } : null;
+              const tooltipData = prevWeeks ? prevWeeks.map(w => ({ label: w.label, val: w.val })) : null;
+              return (
+                <BarRow
+                  key={name} name={name} value={Math.round(value)} maxValue={Math.round(maxVal)}
+                  accent={v.accent} barBg={v.barBg} barBorder={v.barBorder}
+                  staggerMs={i * 50} animateNumbers={animateNumbers}
+                  onTap={(e) => handleTap(name, e)}
+                  tooltipData={tooltipData}
+                  tapPos={tapPos}
+                  dimmed={tooltipState !== null && tooltipState.loc !== name}
+                  tooltipLabelKey="label"
+                  tooltipTitle="PREVIOUS WEEKS"
+                />
+              );
+            })}
           </div>
         </div>
       );
@@ -541,9 +608,23 @@
     /* ─── Month calendar card (Location browse mode) ───────────────────────── */
     const CAL_DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
-    function MonthCalendarCard({ name, year, month, dayMap, colorIdx }) {
+    function MonthCalendarCard({ name, year, month, dayMap, colorIdx, activeTooltip, onTooltipChange }) {
       const v = VARIANTS[colorIdx % 4];
-      const [tooltipDay, setTooltipDay] = useState(null);
+      const cardRef = React.useRef(null);
+
+      // Only this card's tooltip is active when the cardKey matches
+      const tooltipInfo = activeTooltip?.cardKey === name ? activeTooltip : null;
+
+      useEffect(() => {
+        if (!tooltipInfo) return;
+        const dismiss = () => onTooltipChange(null);
+        document.addEventListener('click', dismiss);
+        window.addEventListener('scroll', dismiss, true);
+        return () => {
+          document.removeEventListener('click', dismiss);
+          window.removeEventListener('scroll', dismiss, true);
+        };
+      }, [tooltipInfo]);
 
       // Build grid: pad from Monday of the week containing the 1st
       const firstDay = new Date(year, month, 1);
@@ -556,8 +637,22 @@
 
       const maxVal = Math.max(...Object.values(dayMap).filter(v => v > 0), 1);
 
+      const handleCellClick = (e, day, val) => {
+        e.stopPropagation();
+        if (tooltipInfo?.day === day) { onTooltipChange(null); return; }
+        const cellRect = e.currentTarget.getBoundingClientRect();
+        const cardRect = cardRef.current.getBoundingClientRect();
+        onTooltipChange({
+          cardKey: name, day, val,
+          cellX: cellRect.left + cellRect.width / 2 - cardRect.left,
+          cellTop: cellRect.top - cardRect.top,
+          cellBottom: cellRect.bottom - cardRect.top,
+        });
+      };
+
       return (
-        <div style={{
+        <div ref={cardRef} style={{
+          position: 'relative',
           backgroundColor: v.bg, borderRadius: 9.32, padding: 16,
           display: 'flex', flexDirection: 'column', gap: 12,
           border: '1.34px solid rgba(0,0,0,0.07)',
@@ -581,19 +676,18 @@
               const val = dayMap[day];
               const hasRain = val != null && val > 0;
               const fillPct = hasRain ? Math.round((val / maxVal) * 100) : 0;
-              const showTooltip = tooltipDay === day;
               return (
                 <div key={day}
-                  onClick={() => hasRain && setTooltipDay(showTooltip ? null : day)}
+                  onClick={(e) => hasRain && handleCellClick(e, day, val)}
                   style={{
-                    position: 'relative', overflow: 'visible',
+                    position: 'relative',
                     display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
                     borderRadius:6, padding:'4px 2px', minHeight:38,
                     backgroundColor: 'transparent',
                     border: hasRain ? `0.5px solid ${v.barBorder}` : '0.5px solid transparent',
                     cursor: hasRain ? 'pointer' : 'default',
                   }}>
-                  {/* Fill bar — clip overflow inside */}
+                  {/* Fill bar */}
                   {hasRain && (
                     <div style={{
                       position:'absolute', left:0, top:0, bottom:0, overflow:'hidden',
@@ -612,28 +706,45 @@
                   }}>
                     {day}
                   </span>
-                  {/* Tooltip */}
-                  {showTooltip && (
-                    <div style={{
-                      position:'absolute', bottom:'calc(100% + 5px)', left:'50%',
-                      transform:'translateX(-50%)',
-                      backgroundColor:'#1a1a2e', color:'#fff',
-                      fontSize:11, fontWeight:600, whiteSpace:'nowrap',
-                      borderRadius:6, padding:'3px 8px', zIndex:20,
-                      pointerEvents:'none',
-                    }}>
-                      {val}mm
-                      <div style={{
-                        position:'absolute', top:'100%', left:'50%', transform:'translateX(-50%)',
-                        borderLeft:'4px solid transparent', borderRight:'4px solid transparent',
-                        borderTop:'4px solid #1a1a2e',
-                      }} />
-                    </div>
-                  )}
                 </div>
               );
             })}
           </div>
+
+          {/* Tooltip — rendered at card level so it stays within card bounds */}
+          {tooltipInfo && (() => {
+            const TW = 130, MARGIN = 8, GAP = 5, TH = 54;
+            const cardW = cardRef.current?.offsetWidth || 280;
+            const clampedX = Math.min(Math.max(tooltipInfo.cellX, TW / 2 + MARGIN), cardW - TW / 2 - MARGIN);
+            const arrowOff = tooltipInfo.cellX - clampedX;
+            const showAbove = tooltipInfo.cellTop > TH + GAP + 8;
+            const top = showAbove ? tooltipInfo.cellTop - TH - GAP : tooltipInfo.cellBottom + GAP;
+            return (
+              <div style={{
+                position: 'absolute',
+                left: clampedX, top,
+                transform: 'translateX(-50%)',
+                backgroundColor: '#1a1a2e', color: '#fff',
+                borderRadius: 8, padding: '6px 10px', zIndex: 20,
+                pointerEvents: 'none', whiteSpace: 'nowrap',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
+                minWidth: TW,
+              }}>
+                <div style={{ fontSize:10, fontWeight:600, color:'#9ca3af', marginBottom:4, letterSpacing:0.3 }}>
+                  RAINWATER READING
+                </div>
+                <div style={{ fontSize:12, fontWeight:700, color:'#93c5fd' }}>
+                  {tooltipInfo.val}mm
+                </div>
+                <div style={{
+                  position: 'absolute',
+                  ...(showAbove ? { top: '100%', borderTop: '5px solid #1a1a2e', borderBottom: 'none' } : { bottom: '100%', borderBottom: '5px solid #1a1a2e', borderTop: 'none' }),
+                  left: `calc(50% + ${arrowOff}px)`, transform: 'translateX(-50%)',
+                  borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
+                }} />
+              </div>
+            );
+          })()}
         </div>
       );
     }
@@ -827,6 +938,82 @@
       );
     }
 
+    /* ─── Custom Day Picker ─────────────────────────────────────────────────── */
+    function CustomDayPicker({ allRows, value, onChange, onClose }) {
+      const toLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const rainyDates = new Set(allRows.map(r => r.date ? toLocal(r.date) : null).filter(Boolean));
+
+      const initDate = value ? new Date(value + 'T00:00:00') : new Date();
+      const [viewMonth, setViewMonth] = useState(initDate.getMonth());
+      const [viewYear, setViewYear]   = useState(initDate.getFullYear());
+
+      const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      const DOW = ['M','T','W','T','F','S','S'];
+
+      const firstDay  = new Date(viewYear, viewMonth, 1);
+      const startPad  = (firstDay.getDay() + 6) % 7; // 0=Mon
+      const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+      const cells = [];
+      for (let i = 0; i < startPad; i++) cells.push(null);
+      for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+      const prevMonth = () => { if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y-1); } else setViewMonth(m => m-1); };
+      const nextMonth = () => { if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y+1); } else setViewMonth(m => m+1); };
+
+      const handleSelect = (day) => {
+        const str = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        if (rainyDates.has(str)) { onChange(str); onClose(); }
+      };
+
+      useEffect(() => {
+        const handler = (e) => { e.stopPropagation(); };
+        return () => {};
+      }, []);
+
+      return (
+        <div style={{
+          position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 9999,
+          backgroundColor: '#fff', borderRadius: 12, padding: '10px 10px 12px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+          border: '1px solid #e5e7eb', width: 216,
+        }} onClick={e => e.stopPropagation()}>
+          {/* Month nav */}
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+            <button onClick={prevMonth} style={{ background:'none', border:'none', cursor:'pointer', padding:'2px 8px', fontSize:18, color:'#374151', lineHeight:1 }}>‹</button>
+            <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:'#374151' }}>
+              {MONTH_NAMES[viewMonth]} {viewYear}
+            </span>
+            <button onClick={nextMonth} style={{ background:'none', border:'none', cursor:'pointer', padding:'2px 8px', fontSize:18, color:'#374151', lineHeight:1 }}>›</button>
+          </div>
+          {/* DOW header */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:2, marginBottom:4 }}>
+            {DOW.map((d, i) => (
+              <div key={i} style={{ textAlign:'center', fontFamily:"'Nunito',sans-serif", fontSize:9, fontWeight:700, color:'#9ca3af' }}>{d}</div>
+            ))}
+          </div>
+          {/* Date cells */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:2 }}>
+            {cells.map((day, i) => {
+              if (!day) return <div key={`p${i}`} />;
+              const dateStr = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+              const hasRain  = rainyDates.has(dateStr);
+              const isSelected = value === dateStr;
+              return (
+                <div key={day} onClick={() => handleSelect(day)} style={{
+                  textAlign:'center', borderRadius:6, padding:'5px 0',
+                  fontFamily:"'Nunito',sans-serif", fontSize:11,
+                  fontWeight: hasRain ? 700 : 400,
+                  color: isSelected ? '#fff' : hasRain ? '#155dfc' : '#d1d5db',
+                  backgroundColor: isSelected ? '#155dfc' : hasRain ? '#eff6ff' : 'transparent',
+                  cursor: hasRain ? 'pointer' : 'default',
+                }}>{day}</div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
     /* ─── App ──────────────────────────────────────────────────────────────── */
     function App() {
       const [cards, setCards]         = useState([]);
@@ -836,6 +1023,8 @@
       const [hasMore, setHasMore]     = useState(true);
       const [error, setError]         = useState('');
       const [activeTab, setActiveTab] = useState('day');
+      const [selectedDay, setSelectedDay] = useState('');
+      const [showDayPicker, setShowDayPicker] = useState(false);
 
       // Week view state
       const [weekCards, setWeekCards]   = useState([]);
@@ -854,6 +1043,7 @@
       const [monthViewMode, setMonthViewMode] = useState('all'); // 'all' | 'browse'
       const [selectedMonth, setSelectedMonth] = useState('');
       const [selectedLocation, setSelectedLocation] = useState('');
+      const [monthCalTooltip, setMonthCalTooltip] = useState(null);
 
       const load = useCallback(async (currentLoaded) => {
         setLoading(true);
@@ -915,6 +1105,13 @@
         if (activeTab === 'week' && !weekLoaded && !weekLoading) loadWeeks();
         if (activeTab === 'month' && !monthLoaded && !monthLoading) loadMonths();
       }, [activeTab]);
+
+      useEffect(() => {
+        if (!showDayPicker) return;
+        const dismiss = () => setShowDayPicker(false);
+        document.addEventListener('click', dismiss);
+        return () => document.removeEventListener('click', dismiss);
+      }, [showDayPicker]);
 
       return (
         <div style={{
@@ -979,45 +1176,117 @@
           {/* ── Highest rainfall banner ────────────────────────────────── */}
           {(() => {
             if (activeTab === 'week' || activeTab === 'month') return null;
-            if (allRows.length === 0) return null;
+            if (allRows.length === 0 && activeTab !== 'day') return null;
             let best = { val: 0, loc: '', date: null };
             for (const row of allRows) {
               for (const [loc, val] of Object.entries(row.locations)) {
                 if (val > best.val) best = { val, loc, date: row.date };
               }
             }
-            if (best.val === 0) return null;
-            const day = best.date.getDate();
-            const mon = best.date.toLocaleString('en-IN', { month: 'short' });
+            const pill = best.val > 0 ? (() => {
+              const day = best.date.getDate();
+              const mon = best.date.toLocaleString('en-IN', { month: 'short' });
+              return (
+                <div style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  backgroundColor: '#f3f4f6', borderRadius: 8,
+                  padding: '4px 10px',
+                }}>
+                  <span style={{ fontSize: 11 }}>⛈️</span>
+                  <span style={{ fontSize: 11, fontWeight: 500, color: '#374151' }}>
+                    Highest rainfall on <strong>{day} {mon}</strong>, {best.loc} – <strong>{best.val}mm</strong>
+                  </span>
+                </div>
+              );
+            })() : <div />;
             return (
-              <div style={{
-                display: 'inline-flex', alignItems: 'center', gap: 4,
-                backgroundColor: '#f3f4f6', borderRadius: 8,
-                padding: '4px 10px', alignSelf: 'flex-start',
-              }}>
-                <span style={{ fontSize: 11 }}>⛈️</span>
-                <span style={{ fontSize: 11, fontWeight: 500, color: '#374151' }}>
-                  Highest rainfall on <strong>{day} {mon}</strong>, {best.loc} – <strong>{best.val}mm</strong>
-                </span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                {pill}
+                {activeTab === 'day' && (
+                  <div style={{ position: 'relative', width: 30, height: 30 }} onClick={e => { e.stopPropagation(); setShowDayPicker(v => !v); }}>
+                    <div style={{
+                      position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      borderRadius: 8, cursor: 'pointer',
+                      border: selectedDay ? '1.5px solid #155dfc' : '1.34px solid #d1d5db',
+                      background: selectedDay ? '#eff6ff' : '#fff',
+                    }}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                        stroke={selectedDay ? '#155dfc' : '#6b7280'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                        <line x1="16" y1="2" x2="16" y2="6"/>
+                        <line x1="8" y1="2" x2="8" y2="6"/>
+                        <line x1="3" y1="10" x2="21" y2="10"/>
+                      </svg>
+                    </div>
+                    {showDayPicker && (
+                      <CustomDayPicker
+                        allRows={allRows}
+                        value={selectedDay}
+                        onChange={v => { setSelectedDay(v); setShowDayPicker(false); }}
+                        onClose={() => setShowDayPicker(false)}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
             );
           })()}
 
           {/* ── Day view ────────────────────────────────────────────────── */}
           {activeTab === 'day' && (<>
-            {(() => {
+            {selectedDay && (() => {
+              const toLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+              const globalMax = allRows.length > 0 ? Math.max(...allRows.flatMap(r => Object.values(r.locations)), 1) : 1;
+              const src = allRows.length > 0 ? allRows : cards;
+              const match = src.find(r => r.date && toLocal(r.date) === selectedDay);
+              return (
+                <div>
+                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: 6 }}>
+                    <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:600, color:'#155dfc' }}>
+                      {new Date(selectedDay + 'T00:00:00').toLocaleDateString('en-IN', { day:'numeric', month:'long', year:'numeric' })}
+                    </span>
+                    <button onClick={() => setSelectedDay('')} style={{ background:'none', border:'none', cursor:'pointer', fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:600, color:'#99a1af' }}>Clear</button>
+                  </div>
+                  {match
+                    ? <DateCard data={match} colorIdx={0} animateNumbers={false} globalMax={globalMax} allRows={allRows} />
+                    : <div style={{ textAlign:'center', color:'#99a1af', fontFamily:"'Nunito',sans-serif", fontSize:13, padding:'24px 0' }}>☀️ No rain recorded on this date</div>
+                  }
+                </div>
+              );
+            })()}
+            {!selectedDay && (() => {
               const globalMax = allRows.length > 0
                 ? Math.max(...allRows.flatMap(r => Object.values(r.locations)), 1)
                 : Math.max(...cards.flatMap(c => Object.values(c.locations)), 1);
-              return cards.map((card, i) => (
-              <React.Fragment key={card.date ? card.date.toISOString() : i}>
-                <DateCard data={card} colorIdx={i} animateNumbers={card.isInitial} globalMax={globalMax} allRows={allRows} />
-                {i < cards.length - 1 && card.date && cards[i + 1].date && (
-                  <GapSummary olderDate={cards[i + 1].date} newerDate={card.date} />
-                )}
-              </React.Fragment>
-            ));
+              return cards.map((card, i) => {
+                const showMonthLabel = card.date && (
+                  i === 0 ||
+                  !cards[i - 1].date ||
+                  cards[i - 1].date.getMonth() !== card.date.getMonth() ||
+                  cards[i - 1].date.getFullYear() !== card.date.getFullYear()
+                );
+                return (
+                  <React.Fragment key={card.date ? card.date.toISOString() : i}>
+                    {showMonthLabel && (
+                      <div style={{
+                        fontFamily: "'Nunito', sans-serif",
+                        fontSize: 13, fontWeight: 700,
+                        color: '#99a1af', letterSpacing: 0.5,
+                        textTransform: 'uppercase',
+                        paddingTop: i === 0 ? 0 : 8, paddingBottom: 0,
+                      }}>
+                        {card.date.toLocaleString('en-IN', { month: 'long', year: 'numeric' })}
+                      </div>
+                    )}
+                    <DateCard data={card} colorIdx={i} animateNumbers={card.isInitial} globalMax={globalMax} allRows={allRows} />
+                    {i < cards.length - 1 && card.date && cards[i + 1].date && (
+                      <GapSummary olderDate={cards[i + 1].date} newerDate={card.date} />
+                    )}
+                  </React.Fragment>
+                );
+              });
             })()}
+
             {loading && (
               <div style={{ textAlign:'center', color:'#155dfc', fontFamily:"'Nunito',sans-serif", fontSize:14, padding:'8px 0' }}>
                 Loading…
@@ -1145,7 +1414,12 @@
             {weekViewMode === 'all' && (() => {
               const globalMax = Math.max(...weekCards.flatMap(w => Object.values(w.locations)), 1);
               return weekCards.map((week, i) => (
-                <WeekCard key={week.monday.toISOString()} data={week} colorIdx={i} animateNumbers={week.isInitial} globalMax={globalMax} />
+                <React.Fragment key={week.monday.toISOString()}>
+                  <WeekCard data={week} colorIdx={i} animateNumbers={week.isInitial} globalMax={globalMax} allWeekCards={weekCards} />
+                  {i < weekCards.length - 1 && (
+                    <WeekGapSummary olderMonday={weekCards[i + 1].monday} newerMonday={week.monday} />
+                  )}
+                </React.Fragment>
               ));
             })()}
 
@@ -1351,6 +1625,8 @@
                     key={locName} name={locName}
                     year={mData.year} month={mData.month}
                     dayMap={dayMap} colorIdx={li}
+                    activeTooltip={monthCalTooltip}
+                    onTooltipChange={setMonthCalTooltip}
                   />
                 );
               });
