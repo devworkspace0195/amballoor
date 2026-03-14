@@ -239,7 +239,7 @@
     /* ─── Bar row ──────────────────────────────────────────────────────────── */
     // staggerMs  – delay before this bar starts animating (creates waterfall effect)
     // animateNumbers – count numeral from 0 → value in sync with the bar
-    function BarRow({ name, value, maxValue, accent, barBg, barBorder, staggerMs = 0, animateNumbers = false }) {
+    function BarRow({ name, value, maxValue, accent, barBg, barBorder, staggerMs = 0, animateNumbers = false, onTap, tooltipData, tapPos, dimmed }) {
       const target = maxValue > 0 ? Math.round((value / maxValue) * 100) : 0;
 
       // Bar width: starts at 0, jumps to target after stagger → CSS handles ease-out
@@ -274,21 +274,23 @@
       }, []);
 
       return (
-        <div style={{ position: 'relative', height: 39, width: '100%' }}>
-          {/* Coloured bar — CSS transition drives the ease-out grow animation */}
-          <div style={{
+        <div style={{ position: 'relative', height: 39, width: '100%', opacity: dimmed ? 0.35 : 1, transition: 'opacity 0.2s ease' }}>
+          {/* Coloured bar — tappable */}
+          <div onClick={(e) => onTap && onTap(e)} style={{
             position: 'absolute', left: 0, top: 0,
             height: '100%',
             width: `${barWidth}%`,
             backgroundColor: barBg,
+            borderRadius: '4px 100px 100px 4px',
             transition: 'width 0.75s cubic-bezier(0.4, 0, 0.2, 1)',
+            cursor: onTap ? 'pointer' : 'default',
           }} />
-          {/* Location label */}
-          <div style={{
+          {/* Location label — tappable */}
+          <div onClick={(e) => onTap && onTap(e)} style={{
             position: 'absolute', left: 0, top: 0,
             height: '100%', paddingLeft: 11,
             display: 'flex', alignItems: 'center',
-            zIndex: 1, pointerEvents: 'none',
+            zIndex: 1, cursor: onTap ? 'pointer' : 'default',
           }}>
             <span style={{
               fontFamily: "'Nunito', sans-serif",
@@ -316,6 +318,44 @@
               {disp > 0 ? disp : '☀️'}
             </span>
           </div>
+          {/* Tooltip: previous 2 days */}
+          {tooltipData && tooltipData.length > 0 && tapPos && (() => {
+            const TW = 155, MARGIN = 12;
+            const clampedX = Math.min(Math.max(tapPos.x, TW / 2 + MARGIN), window.innerWidth - TW / 2 - MARGIN);
+            const arrowOff = tapPos.x - clampedX;
+            return (
+              <div style={{
+                position: 'fixed',
+                left: clampedX, top: tapPos.y - 10,
+                transform: 'translate(-50%, -100%)',
+                backgroundColor: '#1a1a2e', color: '#fff',
+                borderRadius: 8, padding: '6px 10px', zIndex: 9999,
+                pointerEvents: 'none', minWidth: TW,
+                boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
+              }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginBottom: 4, letterSpacing: 0.3 }}>
+                  PREVIOUS DATES
+                </div>
+                {tooltipData.map(({ date, val }) => {
+                  const d = date.getDate();
+                  const mon = date.toLocaleString('en-IN', { month: 'short' });
+                  return (
+                    <div key={d} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 11, fontWeight: 500 }}>
+                      <span style={{ color: '#d1d5db' }}>{d} {mon}</span>
+                      <span style={{ fontWeight: 700, color: val > 0 ? '#93c5fd' : '#6b7280' }}>
+                        {val > 0 ? `${val}mm` : '☀️ no rain'}
+                      </span>
+                    </div>
+                  );
+                })}
+                <div style={{
+                  position: 'absolute', top: '100%', left: `calc(50% + ${arrowOff}px)`, transform: 'translateX(-50%)',
+                  borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
+                  borderTop: '5px solid #1a1a2e',
+                }} />
+              </div>
+            );
+          })()}
         </div>
       );
     }
@@ -356,11 +396,39 @@
     }
 
     /* ─── Date card ────────────────────────────────────────────────────────── */
-    function DateCard({ data, colorIdx, animateNumbers, globalMax }) {
+    function DateCard({ data, colorIdx, animateNumbers, globalMax, allRows }) {
       const v = VARIANTS[colorIdx % 4];
+      const [tooltipState, setTooltipState] = useState(null); // { loc, x, y }
       // Sort locations A → Z
       const sorted = Object.entries(data.locations).sort(([a], [b]) => a.localeCompare(b));
       const maxVal = globalMax || Math.max(...sorted.map(([, n]) => n), 1);
+
+      useEffect(() => {
+        if (!tooltipState) return;
+        const dismiss = () => setTooltipState(null);
+        document.addEventListener('click', dismiss);
+        window.addEventListener('scroll', dismiss, true);
+        return () => {
+          document.removeEventListener('click', dismiss);
+          window.removeEventListener('scroll', dismiss, true);
+        };
+      }, [tooltipState]);
+
+      const getPrevData = (locName) => {
+        const DAY_MS = 24 * 60 * 60 * 1000;
+        return [1, 2].map(offset => {
+          const d = new Date(data.date.getTime() - offset * DAY_MS);
+          const row = allRows && allRows.find(r => r.date && r.date.toDateString() === d.toDateString());
+          const val = row ? Math.round(row.locations[locName] ?? 0) : 0;
+          return { date: d, val };
+        });
+      };
+
+      const handleTap = (name, e) => {
+        e.stopPropagation();
+        if (tooltipState?.loc === name) { setTooltipState(null); return; }
+        setTooltipState({ loc: name, x: e.clientX, y: e.clientY });
+      };
 
       return (
         <div style={{
@@ -383,6 +451,10 @@
                 key={name} name={name} value={value} maxValue={maxVal}
                 accent={v.accent} barBg={v.barBg} barBorder={v.barBorder}
                 staggerMs={i * 50} animateNumbers={animateNumbers}
+                onTap={(e) => handleTap(name, e)}
+                tooltipData={tooltipState?.loc === name ? getPrevData(name) : null}
+                tapPos={tooltipState?.loc === name ? { x: tooltipState.x, y: tooltipState.y } : null}
+                dimmed={tooltipState !== null && tooltipState.loc !== name}
               />
             ))}
           </div>
@@ -933,7 +1005,7 @@
                 : Math.max(...cards.flatMap(c => Object.values(c.locations)), 1);
               return cards.map((card, i) => (
               <React.Fragment key={card.date ? card.date.toISOString() : i}>
-                <DateCard data={card} colorIdx={i} animateNumbers={card.isInitial} globalMax={globalMax} />
+                <DateCard data={card} colorIdx={i} animateNumbers={card.isInitial} globalMax={globalMax} allRows={allRows} />
                 {i < cards.length - 1 && card.date && cards[i + 1].date && (
                   <GapSummary olderDate={cards[i + 1].date} newerDate={card.date} />
                 )}
