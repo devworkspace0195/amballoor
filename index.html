@@ -765,8 +765,11 @@
 
       const pts = allPts.slice(viewRange[0], viewRange[1] + 1);
       const peakVal = Math.max(...pts.map(p => p.val), 1);
-      const maxVal = Math.ceil(peakVal / 5) * 5 + 10; // round up to next multiple of 5, +10 headroom
-      const yTicks = Array.from({ length: Math.floor(maxVal / 5) + 1 }, (_, i) => i * 5).filter(t => t <= maxVal);
+
+      // Determine y-axis step and maxVal based on peakVal
+      const yStep = peakVal > 40 ? 10 : 5;
+      const maxVal = Math.ceil(peakVal / yStep) * yStep + yStep; // round up to next multiple, add headroom
+      const yTicks = Array.from({ length: Math.floor(maxVal / yStep) + 1 }, (_, i) => i * yStep).filter(t => t <= maxVal);
 
       const W = 320, H = 213, PL = 28, PR = 6, PT = 12, PB = 30;
       const chartW = W - PL - PR, chartH = H - PT - PB;
@@ -862,7 +865,7 @@
             ))}
 
             {/* Y axis label */}
-            <text x={7} y={PT + chartH/2} textAnchor="middle" fill="#99a1af" fontSize="7" fontFamily="Nunito,sans-serif"
+            <text x={7} y={PT + chartH/1.9} textAnchor="middle" fill="#99a1af" fontSize="7" fontFamily="Nunito,sans-serif"
               transform={`rotate(-90,7,${PT + chartH/2})`}>Rain</text>
 
             {/* Fill + line */}
@@ -882,7 +885,7 @@
             ))}
 
             {/* X axis label */}
-            <text x={PL + chartW/2} y={H-3} textAnchor="middle" fill="#99a1af" fontSize="7" fontFamily="Nunito,sans-serif">Dates</text>
+            <text x={PL + chartW/2.1} y={H-3} textAnchor="middle" fill="#99a1af" fontSize="7" fontFamily="Nunito,sans-serif">Dates</text>
 
             {/* Tooltip crosshair */}
             {tooltip !== null && tooltip < pts.length && (() => {
